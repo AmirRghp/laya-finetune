@@ -1,0 +1,260 @@
+# AGENTS.md
+
+Binding rules for every agent and every human contributor working in this repository.
+These rules are not advisory. A change that violates one is a defect, not a trade-off.
+
+The project prepares fine-tuning data for **Laya Multilingual**
+(`convaiinnovations/laya-multilingual`), a structured *decision* model, using the Persian
+Markdown corpus in `corpus/`.
+
+---
+
+## 1. Corpus handling — non-negotiable
+
+1.1 `corpus/` is the **source of truth** and is **read-only** to every automated process.
+
+1.2 Never modify, rename, move, delete, reformat, re-encode, or overwrite any file under
+`corpus/`. Never write to `corpus/` for any reason, including scratch files, backups, or
+temporary output.
+
+1.3 Every corpus read opens files in binary or `encoding="utf-8"` read mode. Writes never target
+a path resolved inside the corpus directory. `io.py` enforces this with an assertion, not a
+convention.
+
+1.4 `corpus/` is **not committed to Git**. `.gitignore` excludes it. Generated datasets that may
+contain sensitive derived text are excluded too.
+
+1.5 Document discovery is **recursive** over `*.md` and `*.markdown`, with extensions compared
+case-insensitively.
+
+1.6 Discovery order is **deterministic**: POSIX-relative path, sorted, with a stable Unicode
+code-point comparison. Re-running discovery on an unchanged corpus yields an identical list.
+
+1.7 **No filename assumptions.** The pipeline must never branch on a filename, prefix, numeric
+separator, numbering scheme, extension-derived category, or path depth. Tests
+(`test_corpus_discovery.py::test_filename_independence`) pin this by ingesting the same
+documents under scrambled names and asserting identical chunk content and stable grouping.
+
+1.8 The document collection is **not fixed**. Adding, removing or renaming documents under
+`corpus/` must work without a code change. Incremental processing keys off content hashes, not
+filenames, so a renamed file that keeps its content is not reprocessed.
+
+---
+
+## 2. Text handling
+
+2.1 Persisted text is preserved exactly as read, apart from: BOM removal, CRLF→LF line-ending
+normalisation, and Unicode NFC normalisation. Nothing else.
+
+2.2 Aggressive cleaning — case folding, stripping punctuation, removing ZWNJ, transliteration,
+collapsing whitespace, removing digits — is **forbidden** on stored text. Persian meaning,
+punctuation, Persian and Arabic digits, dates and technical terminology are load-bearing.
+
+2.3 Comparison-time folding (Arabic `ي`→`ی`, `ك`→`ک`, diacritic removal, zero-width removal)
+is permitted **only** inside hashing, deduplication and similarity functions, and must be
+applied to a derived value, never written back to the document or chunk text.
+
+2.4 Tokenisation is Unicode-aware. Persian ZWNJ (`U+200C`) separates words and must not be
+treated as whitespace during tokenisation.
+
+2.5 Markdown must not be split at arbitrary character offsets when that would destroy meaning.
+Chunk boundaries fall between structural elements only.
+
+2.6 Structural elements — headings, fenced code blocks, list items, tables, blockquotes — are
+preserved whole. A table is never split between its header and its body. A fenced code block is
+never split inside the fence.
+
+---
+
+## 3. Laya API conformance
+
+3.1 Use only the **official** Laya interfaces. No invented APIs, flags or options.
+
+3.2 Fine-tuning entry points are `laya.train.finetune(...)` and `laya.train.dry_run(...)`
+imported as `from laya.train import ...`. `laya.train` is a module, not a package.
+
+3.3 The `laya-train` **CLI is not sufficient** for this project: it cannot express `amp`,
+`gradient_checkpointing`, `calib_max`, `calib_frac` or `calib_seed`. Shelling out to it would
+silently apply defaults the operator did not choose. Training goes through Python.
+
+3.4 Training rows are exactly `{state, questions, expected}` (`choice`/`noul`/`score`), plus
+optional `tags` and `language`, which `laya.evals` reads and the trainer ignores.
+
+3.5 One row carries exactly one decision. `items_from_rows` discards every question on a row
+whose `state` is empty, so a row with several chunks and one label is unrepresentable. Each
+`(query, chunk)` pair is its own row.
+
+3.6 Question `instructions` is mandatory and non-empty; `criteria` for a `choice` question is a
+non-empty dict or list. Validate before writing, never after.
+
+3.7 The question definition has one source of truth — `laya.questions` in the config. Builder,
+validator and evaluation all read it from there. A question schema that differs between
+training and inference is a defect.
+
+3.8 The `state` is rendered from a config-driven Persian labelled template. The rendered form is
+fingerprinted and compared between build time and evaluation time.
+
+3.9 Pass `eval_data` for every real run. Without it Laya reports in-sample calibration fit
+numbers and says so; those numbers are not held-out results and must not be presented as such.
+
+3.10 Never reuse calibration data for model fitting. Validation is the calibration split.
+
+3.11 Laya is a structured decision model, not a generative LM. SFT, QLoRA, TRL, causal-LM
+cross-entropy on raw text, and any "prompt/completion" framing are **out of scope**.
+
+3.12 `laya-multilingual` ships with `temperature: [1,1,1]` and empty
+`temperature_by_options` — uncalibrated. Never gate on `min_confidence` or present a
+confidence number as calibrated until temperatures have been refit and validated on held-out
+data. Say so in every report that prints confidence.
+
+3.13 The optimiser-update budget is
+`epochs * ceil(ceil(train_items / micro_batch) / grad_accum)`. Print it before any run that
+costs GPU time. A small dataset needs more epochs to reach a comparable update count.
+
+3.14 Never fabricate a benchmark number. A metric that was not measured is absent from the
+report, never zero and never estimated.
+
+---
+
+## 4. Determinism and reproducibility
+
+4.1 One configured seed, threaded explicitly through every stage that samples, shuffles or
+splits. No module-level `random`, no unseeded `random.shuffle`, no unseeded `np.random`.
+
+4.2 Idempotence: re-running a stage on unchanged inputs produces byte-identical outputs.
+
+4.3 Every artifact write is atomic — write to a sibling temp file, `os.replace`. A crashed run
+never leaves a half-written dataset that the next run will trust.
+
+4.4 Every artifact directory carries a `manifest.json` with input hashes, config hash, seed,
+counts and stage version, so a result can be traced to the exact inputs that produced it.
+
+4.5 Caches are content-addressed. A cache hit must produce the same value a fresh call would.
+
+---
+
+## 5. Code standards
+
+5.1 Full type hints on every public function and every module-level constant.
+
+5.2 Structured logging via the `logging` module with explicit named fields — never bare
+`print()` for pipeline output, never `print()` for diagnostics in library code.
+
+5.3 Exceptions are typed, defined in `errors.py`, and raised with a message naming the offending
+path, id or value. Never swallow an exception silently; catch only to add context or to retry.
+
+5.4 Configuration is dataclasses loaded from YAML with explicit validation. No hardcoded
+absolute paths, credentials, API tokens or model endpoints anywhere in `src/`. Endpoints come
+from config or environment.
+
+5.5 Config defaults live in `configs/default.yaml`. Code holds only structural defaults and
+raises on invalid values rather than silently repairing them.
+
+5.6 Modules are small and single-purpose. `corpus/`, `tasks/`, `dataset/` and `evaluation/`
+are packages with `__init__.py`; `chunking.py`, `retrieval.py`, `negatives.py`, `labeling.py`,
+`training.py` and `io.py` are modules.
+
+5.7 Prefer the standard library. Justified dependencies only: `pyyaml`, `httpx`, `numpy`, and
+`pytest` for development. `laya` and `torch` are optional extras imported lazily inside
+functions, never at module import time, so the data pipeline runs without them.
+
+7.8 No databases, Docker orchestration, web dashboards, frontend frameworks, or service
+infrastructure. This is a batch pipeline over files.
+
+---
+
+## 6. Dataset correctness rules
+
+6.1 **Never automatically label a non-source chunk as irrelevant.** A negative must pass an
+evidence check. Absence of the source document is not evidence of irrelevance.
+
+6.2 Ambiguity is a discard, not a coin flip. Candidates answered *uncertain* by the teacher are
+dropped, not assigned a label.
+
+6.3 Never create a near-duplicate contradiction — a positive and a negative sharing content,
+or a negative containing a key-point answer string.
+
+6.4 Positive generation must not invent facts absent from the document. `key_points` are
+extracted verbatim-grounded; the verbatim source span is stored alongside each one.
+
+6.5 Sufficiency is never inferred from semantic similarity. It is judged against coverage of
+the `key_points` by the retrieved set.
+
+6.6 Routing labels derive from query form. The labeling teacher never receives the source
+document's identity or domain.
+
+6.7 Split **before** mining negatives, and mine within each split's own chunk pool, so no test
+document's text can reach a training row.
+
+6.8 Group splitting is by source document and by near-duplicate document family. No document
+content, and no paraphrased query, may appear in two splits.
+
+6.9 Prefer fewer correct examples over more unreliable ones. Volume is not a quality metric.
+
+6.10 Human-reviewed labels always take precedence over automatically proposed ones. Both the
+proposal and the accepted label are preserved.
+
+6.11 Teacher confidence is not correctness. Confidence is recorded; it is never used as a
+proxy for label validity.
+
+---
+
+## 7. Testing
+
+7.1 Tests use small synthetic Persian fixtures written for the test suite. Never a production
+corpus document, never real generated data.
+
+7.2 Tests must not require network access, GPU access, or Laya weights. Every external model
+call — Ollama generation, Ollama embedding, teacher labeling, Laya inference — is mocked.
+
+7.3 External model calls go through a single client seam so a test can substitute a fake
+transport without patching call sites.
+
+7.4 Every module with logic gets tests covering its failure modes, not only its happy path:
+empty input, malformed input, empty results, and threshold boundaries.
+
+7.5 Naming independence, Persian handling, duplicate detection, split leakage and config
+validation each have an explicit named test.
+
+7.6 Do not weaken a test to make it pass. Removing an assertion, adding a skip, or loosening a
+threshold to accommodate new behaviour is a regression in the suite.
+
+---
+
+## 8. Execution restrictions for agents
+
+**Agents implement and verify statically. They do not execute.**
+
+8.1 Agents must **not**: install dependencies, run Python scripts, run pytest, invoke Ollama,
+download model weights, generate production datasets, start fine-tuning, start evaluation jobs,
+push to GitHub, or modify any file under `corpus/`.
+
+8.2 Reading files and static inspection are permitted. Reading documentation over HTTP is
+permitted.
+
+8.3 Never report a test as passing, a number as measured, or a run as successful. Only report
+what was actually executed. Everything else is described as unverified.
+
+8.4 Before declaring work complete, perform a static review pass for: missing imports, broken
+module paths, interface mismatches between modules, schema inconsistencies, unguarded `None`
+access, and unreachable error handling. Report what could not be verified without execution.
+
+8.5 Never create placeholder implementations, fake results, stubbed-out features or `TODO`
+markers in place of required behaviour. Required behaviour ships implemented or not at all.
+
+---
+
+## 9. Documentation
+
+9.1 Every pipeline stage has a CLI command, documented in the README with its inputs, outputs,
+runtime cost and whether it needs Ollama or Laya weights.
+
+9.2 The README distinguishes four command classes explicitly: dataset preparation, commands
+that call Ollama, commands that load Laya weights, commands that consume GPU time for training.
+
+9.3 Document the manual execution order from a clean environment, flagging which steps are slow.
+
+9.4 Record known limitations and unverified areas in the README rather than leaving them
+implicit.
+
+9.5 A non-obvious design decision gets a short note where it lives, explaining *why*.

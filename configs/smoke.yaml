@@ -1,0 +1,37 @@
+# Smoke profile: a real but tiny training run, to prove the pipeline end to end
+# and to measure what actually fits in 16 GB.
+#
+#   laya-pipeline train --profile configs/smoke.yaml --dataset relevance --yes
+#
+# Cost: minutes on one consumer GPU. Run this BEFORE full.yaml. If it OOMs,
+# halve `micro_batch` here first — there is no point discovering the memory
+# ceiling on a four-hour run.
+#
+# One epoch, head-only. Exercises the whole path (items, losses, calibration,
+# checkpoint save) with the smallest possible footprint.
+
+project:
+  seed: 20260922
+
+training:
+  epochs: 1
+  micro_batch: 2
+  grad_accum: 8
+  encoder_lr: 0.0          # head-only run
+  head_lr: 1.0e-4
+  loss: soft-ce
+  shuffle_options: []
+  freeze_encoder: true
+  calib_max: 40
+  calib_frac: 0.1
+  calib_seed: 20260922
+  seed: 20260922
+  max_len: 1024
+  head_max_len: 256
+  amp: true
+  gradient_checkpointing: true
+  log_every: 10
+  label_smoothing: 0.0
+  target_error: 0.10
+  min_abstain_n: 10
+  device: auto

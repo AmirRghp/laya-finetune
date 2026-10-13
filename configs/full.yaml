@@ -1,0 +1,51 @@
+# Full fine-tuning profile for one RTX 5060 Ti (16 GB).
+#
+#   laya-pipeline train --profile configs/full.yaml --dataset relevance --yes
+#
+# Cost: hours. Run configs/smoke.yaml first and confirm it fits in memory.
+#
+# The optimizer-update budget is epochs * ceil(ceil(train_items/micro_batch)/grad_accum).
+# The pipeline prints it before the run starts. The official Laya guidance is that
+# a small dataset needs MORE epochs than the 4 the public notebook used, to reach a
+# comparable update count — so 8 is a starting point, not a tuned value. If a run
+# never rises above the class prior, use the label-encoding positive control
+# (`positive_control: true` on the CLI) to separate "too few updates" from
+# "task genuinely hard" before changing anything else.
+#
+# `encoder_lr` below is a full fine-tune. If it OOMs, lower `micro_batch` to 2
+# before lowering epochs: the update budget depends on the product, not on either.
+
+project:
+  seed: 20260922
+
+training:
+  epochs: 8
+  micro_batch: 4
+  grad_accum: 16          # effective batch 64, matching the official notebook
+  encoder_lr: 2.5e-5
+  head_lr: 1.0e-4
+  min_lr: 1.0e-6
+  weight_decay: 0.01
+  grad_clip: 1.0
+  loss: rlcd
+  rl_samples: 4
+  sigma_start: 0.4
+  sigma_end: 0.1
+  w_sph: 0.75
+  w_rps: 1.0
+  shuffle_options: []
+  option_layout: null
+  freeze_encoder: false
+  calib_max: 200
+  calib_frac: 0.1
+  calib_seed: 20260922
+  seed: 20260922
+  max_len: 1024
+  head_max_len: 256
+  amp: true
+  gradient_checkpointing: true
+  log_every: 50
+  label_smoothing: 0.0
+  target_error: 0.10
+  min_abstain_n: 10
+  device: auto

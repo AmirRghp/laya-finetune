@@ -1,0 +1,34 @@
+# The corpus is the source of truth and is deliberately not committed.
+# See AGENTS.md section 1.4.
+#
+# Anchored to the repo root with a leading slash. A bare `corpus/` also matches
+# src/laya_pipeline/corpus/, which is the discovery/markdown/models *package* —
+# ignoring it would silently drop 750 lines of source from the repository.
+/corpus/
+
+# Every generated artifact: chunks, questions, negatives, labels, datasets,
+# checkpoints and evaluation reports may embed derived corpus text.
+# Also root-anchored, for the same reason: a bare `outputs/` or `data/` would
+# match a directory of that name inside a package or a test fixture.
+/outputs/
+/data/
+*.jsonl
+!tests/fixtures/**/*.jsonl
+
+# Environment and secrets. Endpoints and model names belong in the config file;
+# anything genuinely local and secret belongs here.
+.env
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/

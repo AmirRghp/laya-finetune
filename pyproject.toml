@@ -1,0 +1,44 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "laya-pipeline"
+version = "0.1.0"
+description = "Persian RAG decision-model fine-tuning data pipeline for Laya Multilingual"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "Apache-2.0" }
+
+# Justified dependencies only. The data pipeline needs a YAML parser, an HTTP
+# client for Ollama and array maths for the retrieval index.
+dependencies = [
+    "pyyaml>=6.0",
+    "httpx>=0.24",
+    "numpy>=1.21",
+]
+
+[project.optional-dependencies]
+# Training and evaluation. Imported lazily inside functions so that corpus
+# processing, generation, splitting and dataset building all work without them.
+laya = [
+    "laya>=0.4.6",
+    "torch>=2.0.0",
+]
+dev = [
+    "pytest>=7.4",
+]
+
+[project.scripts]
+laya-pipeline = "laya_pipeline.cli:main"
+
+[tool.setuptools]
+package-dir = { "" = "src" }
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+filterwarnings = ["error::DeprecationWarning:laya_pipeline.*"]
