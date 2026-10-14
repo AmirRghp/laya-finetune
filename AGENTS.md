@@ -7,6 +7,23 @@ The project prepares fine-tuning data for **Laya Multilingual**
 (`convaiinnovations/laya-multilingual`), a structured *decision* model, using the Persian
 Markdown corpus in `corpus/`.
 
+### Companion documents
+
+These are **binding**, not background reading. They are referenced by section number
+below, and a change that contradicts one is a defect.
+
+| Document | What it fixes | Referenced by |
+|---|---|---|
+| [`docs/PRD.md`](docs/PRD.md) | What the project must achieve, and how we know it worked. Every functional requirement names the test that verifies it. | §6, §7, §9 |
+| [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | Why each significant decision was made and what was rejected (ADR-001…ADR-015), the layering, the data model, and the 14 invariants. | §1–§6 |
+
+**When you change behaviour, update the companion document in the same commit.** A rule
+here with no recorded reason is how the next contributor "fixes" it back.
+
+**When you make an architectural decision, add an ADR to `docs/ARCHITECTURE.md`.** Number
+them sequentially; never renumber or delete an existing one. If a decision is superseded,
+mark the old one and point it at the new one.
+
 ---
 
 ## 1. Corpus handling — non-negotiable
@@ -75,21 +92,21 @@ imported as `from laya.train import ...`. `laya.train` is a module, not a packag
 
 3.3 The `laya-train` **CLI is not sufficient** for this project: it cannot express `amp`,
 `gradient_checkpointing`, `calib_max`, `calib_frac` or `calib_seed`. Shelling out to it would
-silently apply defaults the operator did not choose. Training goes through Python.
+silently apply defaults the operator did not choose. Training goes through Python. → **ADR-009**
 
 3.4 Training rows are exactly `{state, questions, expected}` (`choice`/`noul`/`score`), plus
 optional `tags` and `language`, which `laya.evals` reads and the trainer ignores.
 
 3.5 One row carries exactly one decision. `items_from_rows` discards every question on a row
 whose `state` is empty, so a row with several chunks and one label is unrepresentable. Each
-`(query, chunk)` pair is its own row.
+`(query, chunk)` pair is its own row. → **ADR-001**
 
 3.6 Question `instructions` is mandatory and non-empty; `criteria` for a `choice` question is a
 non-empty dict or list. Validate before writing, never after.
 
 3.7 The question definition has one source of truth — `laya.questions` in the config. Builder,
 validator and evaluation all read it from there. A question schema that differs between
-training and inference is a defect.
+training and inference is a defect. → **ADR-011**
 
 3.8 The `state` is rendered from a config-driven Persian labelled template. The rendered form is
 fingerprinted and compared between build time and evaluation time.
@@ -109,7 +126,7 @@ data. Say so in every report that prints confidence.
 
 3.13 The optimiser-update budget is
 `epochs * ceil(ceil(train_items / micro_batch) / grad_accum)`. Print it before any run that
-costs GPU time. A small dataset needs more epochs to reach a comparable update count.
+costs GPU time. A small dataset needs more epochs to reach a comparable update count. → **ADR-010**
 
 3.14 Never fabricate a benchmark number. A metric that was not measured is absent from the
 report, never zero and never estimated.
@@ -124,7 +141,7 @@ splits. No module-level `random`, no unseeded `random.shuffle`, no unseeded `np.
 4.2 Idempotence: re-running a stage on unchanged inputs produces byte-identical outputs.
 
 4.3 Every artifact write is atomic — write to a sibling temp file, `os.replace`. A crashed run
-never leaves a half-written dataset that the next run will trust.
+never leaves a half-written dataset that the next run will trust. → **ADR-015**
 
 4.4 Every artifact directory carries a `manifest.json` with input hashes, config hash, seed,
 counts and stage version, so a result can be traced to the exact inputs that produced it.
@@ -166,10 +183,11 @@ infrastructure. This is a batch pipeline over files.
 ## 6. Dataset correctness rules
 
 6.1 **Never automatically label a non-source chunk as irrelevant.** A negative must pass an
-evidence check. Absence of the source document is not evidence of irrelevance.
+evidence check. Absence of the source document is not evidence of irrelevance. → **ADR-008**,
+the four gates
 
 6.2 Ambiguity is a discard, not a coin flip. Candidates answered *uncertain* by the teacher are
-dropped, not assigned a label.
+dropped, not assigned a label. → **ADR-007**
 
 6.3 Never create a near-duplicate contradiction — a positive and a negative sharing content,
 or a negative containing a key-point answer string.
@@ -178,13 +196,13 @@ or a negative containing a key-point answer string.
 extracted verbatim-grounded; the verbatim source span is stored alongside each one.
 
 6.5 Sufficiency is never inferred from semantic similarity. It is judged against coverage of
-the `key_points` by the retrieved set.
+the `key_points` by the retrieved set. → **ADR-002**
 
 6.6 Routing labels derive from query form. The labeling teacher never receives the source
-document's identity or domain.
+document's identity or domain. → **ADR-003**
 
 6.7 Split **before** mining negatives, and mine within each split's own chunk pool, so no test
-document's text can reach a training row.
+document's text can reach a training row. → **ADR-004**
 
 6.8 Group splitting is by source document and by near-duplicate document family. No document
 content, and no paraphrased query, may appear in two splits.
@@ -208,7 +226,7 @@ corpus document, never real generated data.
 call — Ollama generation, Ollama embedding, teacher labeling, Laya inference — is mocked.
 
 7.3 External model calls go through a single client seam so a test can substitute a fake
-transport without patching call sites.
+transport without patching call sites. → **ADR-012**
 
 7.4 Every module with logic gets tests covering its failure modes, not only its happy path:
 empty input, malformed input, empty results, and threshold boundaries.
@@ -258,3 +276,50 @@ that call Ollama, commands that load Laya weights, commands that consume GPU tim
 implicit.
 
 9.5 A non-obvious design decision gets a short note where it lives, explaining *why*.
+
+9.6 [`docs/PRD.md`](docs/PRD.md) and [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) are
+**binding**, not background. Read them before changing behaviour. A change that
+contradicts either is a defect.
+
+9.7 **A behavioural change updates the companion document in the same commit.** If a
+rule here has no recorded reason, the next contributor will "fix" it back.
+
+9.8 **A new architectural decision gets an ADR** in
+[`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md), numbered sequentially. State the
+context, the decision, the alternatives considered, and why each was rejected. Never
+renumber or delete an existing ADR; supersede it and point the old one at the new one.
+
+9.9 Every functional requirement in the PRD names the test that verifies it. A new
+requirement without a named test is an unverified intention — either write the test or
+move it to Open Questions.
+
+### Rule-to-document map
+
+Use this to find the reasoning behind a rule without reading the whole repository.
+
+| Rule | Rationale |
+|---|---|
+| 1.7 no filename assumptions | ADR-005 · ARCHITECTURE §4 (content-derived identifiers) |
+| 2.2 no aggressive cleaning | ARCHITECTURE §12 invariant 3 |
+| 2.4 ZWNJ separates tokens | ARCHITECTURE §2 (`ids.py`) |
+| 3.3 Python API, not the CLI | **ADR-009** |
+| 3.5 one decision per row | **ADR-001** |
+| 3.7 one question definition | **ADR-011** |
+| 3.9 always pass `eval_data` | ADR-010 (print the budget, then prove it) |
+| 3.13 print the update budget | **ADR-010** |
+| 3.14 positive control | ARCHITECTURE §10 (cost of too few updates) |
+| 4.1 one explicit seed | ARCHITECTURE §12 invariant 14 |
+| 4.3 atomic writes | **ADR-015** |
+| 4.4 manifest per artifact | **ADR-015** |
+| 4.5 content-addressed caches | **ADR-015** |
+| 5.5 defaults in YAML | ARCHITECTURE §7 (precedence chain) |
+| 6.1 never auto-label irrelevant | **ADR-008** (four gates) |
+| 6.2 ambiguity is a discard | **ADR-007** |
+| 6.5 sufficiency ≠ similarity | **ADR-002** |
+| 6.6 routing from query form | **ADR-003** |
+| 6.7 split before mining | **ADR-004** |
+| 6.8 group split by family | ADR-005 · ADR-006 (four leakage classes) |
+| 6.11 confidence ≠ correctness | **ADR-007** |
+| 7.3 one transport seam | **ADR-012** |
+| 8.1 agents do not execute | ADR-012 (seam exists so mocks are honest) |
+| 9.6–9.9 companion documents | this section |

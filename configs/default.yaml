@@ -189,8 +189,9 @@ laya:
 # amp, gradient_checkpointing or the calibration knobs, so this stage calls the
 # Python API directly (AGENTS.md 3.3).
 #
-# Starting point for one RTX 5060 Ti (16 GB). These have NOT been measured on
-# that card; lower micro_batch first if the run OOMs.
+# Starting point for a >=16 GB card. NOT measured on any card — the only hardware
+# checked here is an RTX 3050 Laptop with 3.7 GiB, which needs micro_batch 1,
+# gradient_checkpointing, and probably a shorter max_len. Start from configs/smoke.yaml.
 training:
   epochs: 8
   micro_batch: 4

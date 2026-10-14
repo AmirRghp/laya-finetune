@@ -124,6 +124,17 @@ Two properties that matter when you interrupt:
 | [15. Limitations and risks](#15-limitations-and-risks) | what is unverified |
 | [16. Manual execution order](#16-manual-execution-order-condensed) | condensed table |
 
+### Also in `docs/`
+
+| Document | What it is |
+|---|---|
+| [`docs/PRD.md`](docs/PRD.md) | Requirements, success criteria, risks, and the measured baseline. Every requirement names the test that verifies it. |
+| [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | Why each significant decision was made and what was rejected - 15 ADRs, the layering, the data model, 14 invariants. |
+| [`AGENTS.md`](AGENTS.md) | Binding rules. A violation is a defect, not a trade-off. |
+
+The two documents under `docs/` are **binding**, not background: a change that contradicts
+either is a defect. `AGENTS.md` section 9 carries the rule-to-document map.
+
 ---
 
 ## 1. Purpose
