@@ -16,6 +16,7 @@ below, and a change that contradicts one is a defect.
 |---|---|---|
 | [`docs/PRD.md`](docs/PRD.md) | What the project must achieve, and how we know it worked. Every functional requirement names the test that verifies it. | §6, §7, §9 |
 | [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | Why each significant decision was made and what was rejected (ADR-001…ADR-015), the layering, the data model, and the 14 invariants. | §1–§6 |
+| [`docs/TESTING.md`](docs/TESTING.md) | Test layers, focused commands, execution limits, and how to report results. | §7–§8 |
 
 **When you change behaviour, update the companion document in the same commit.** A rule
 here with no recorded reason is how the next contributor "fixes" it back.
@@ -241,24 +242,45 @@ threshold to accommodate new behaviour is a regression in the suite.
 
 ## 8. Execution restrictions for agents
 
-**Agents implement and verify statically. They do not execute.**
+**Agents may implement and run focused, local tests. They do not run expensive model work.**
 
-8.1 Agents must **not**: install dependencies, run Python scripts, run pytest, invoke Ollama,
-download model weights, generate production datasets, start fine-tuning, start evaluation jobs,
-push to GitHub, or modify any file under `corpus/`.
+8.1 Agents must **not**: install dependencies, invoke Ollama, download model weights,
+generate production datasets, start fine-tuning (including `train --yes`), start real
+checkpoint evaluation jobs, push to GitHub, or modify any file under `corpus/`. Agents may
+run focused `pytest` commands that use only the existing environment and synthetic,
+mocked fixtures required by §7. A full test suite is reserved for broad shared-contract
+changes, release work, or an explicit user request, as described in `docs/TESTING.md`.
 
-8.2 Reading files and static inspection are permitted. Reading documentation over HTTP is
-permitted.
+8.2 Reading files, static inspection, and focused local tests are permitted. Reading
+documentation over HTTP is permitted. Tests must not contact external services or load
+model weights.
 
 8.3 Never report a test as passing, a number as measured, or a run as successful. Only report
 what was actually executed. Everything else is described as unverified.
 
 8.4 Before declaring work complete, perform a static review pass for: missing imports, broken
 module paths, interface mismatches between modules, schema inconsistencies, unguarded `None`
-access, and unreachable error handling. Report what could not be verified without execution.
+access, and unreachable error handling. Report what could not be verified by static review
+or focused tests.
 
 8.5 Never create placeholder implementations, fake results, stubbed-out features or `TODO`
 markers in place of required behaviour. Required behaviour ships implemented or not at all.
+
+8.6 Use the project-selected skills in [`docs/AGENT_SKILLS.md`](docs/AGENT_SKILLS.md).
+Complete local copies live under `agent_skills/`. Select only the skill(s) relevant to the
+current task and apply a selected skill when its trigger matches; AGENT_SKILLS.md ranks
+them by project fit. User instructions, this file, the PRD and Architecture take precedence
+over generic skill instructions. Do not load every skill into context or paste whole skill
+files into a prompt; read the relevant local file just in time and keep the active context
+to the task, the governing rules, and the needed source/test files.
+
+8.7 Keep verification proportional to the change. For code or behavior changes, run the
+smallest relevant focused test(s) once after the final edit when the existing environment
+supports them; report the exact command and observed result. Do not install dependencies to
+run tests. If unavailable, report the command as unrun. Documentation-only changes do not
+need code tests. Run the full suite only for broad cross-stage or shared-contract changes,
+release work, or an explicit user request. Never run main fine-tuning or real model jobs as
+verification. Never weaken, skip, or delete a test to save time (§7.6).
 
 ---
 
@@ -277,9 +299,10 @@ implicit.
 
 9.5 A non-obvious design decision gets a short note where it lives, explaining *why*.
 
-9.6 [`docs/PRD.md`](docs/PRD.md) and [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) are
-**binding**, not background. Read them before changing behaviour. A change that
-contradicts either is a defect.
+9.6 [`docs/PRD.md`](docs/PRD.md), [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md), and
+[`docs/TESTING.md`](docs/TESTING.md) are **binding**, not background. Read the relevant
+sections before changing behavior or choosing verification. A change that contradicts them
+is a defect.
 
 9.7 **A behavioural change updates the companion document in the same commit.** If a
 rule here has no recorded reason, the next contributor will "fix" it back.
@@ -321,5 +344,5 @@ Use this to find the reasoning behind a rule without reading the whole repositor
 | 6.8 group split by family | ADR-005 · ADR-006 (four leakage classes) |
 | 6.11 confidence ≠ correctness | **ADR-007** |
 | 7.3 one transport seam | **ADR-012** |
-| 8.1 agents do not execute | ADR-012 (seam exists so mocks are honest) |
+| 8.1 focused tests allowed; model work stays operator-run | `docs/TESTING.md` §4; ADR-012 defines the mock seam |
 | 9.6–9.9 companion documents | this section |

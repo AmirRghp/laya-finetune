@@ -71,9 +71,12 @@ laya-pipeline train --task relevance --profile configs/smoke.yaml \
                    --out outputs/checkpoints/smoke --yes
 ```
 
-### Measured wall-clock on the development machine
+### Historical wall-clock report
 
-20 documents → 80 chunks. `qwen3.5:4b-q4_K_M`, `qwen3-embedding:4b`, RTX 3050 Laptop.
+The earlier runbook recorded these timings for 20 documents and 80 chunks, using
+`qwen3.5:4b-q4_K_M`, `qwen3-embedding:4b`, and an RTX 3050 Laptop. The operator recalls
+running the pipeline, but the saved artifacts do not include run attribution or stage
+timings. Treat these as historical estimates, not a current benchmark.
 
 | Stage | Class | Wall clock | Calls | What dominates |
 |---|---|---|---|---|
@@ -128,7 +131,7 @@ Two properties that matter when you interrupt:
 
 | Document | What it is |
 |---|---|
-| [`docs/PRD.md`](docs/PRD.md) | Requirements, success criteria, risks, and the measured baseline. Every requirement names the test that verifies it. |
+| [`docs/PRD.md`](docs/PRD.md) | Requirements, success criteria, risks, and the saved artifact snapshot. Every requirement names the test that verifies it. |
 | [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | Why each significant decision was made and what was rejected - 15 ADRs, the layering, the data model, 14 invariants. |
 | [`AGENTS.md`](AGENTS.md) | Binding rules. A violation is a defect, not a trade-off. |
 
@@ -930,6 +933,9 @@ reachable.
 | smoke | `configs/smoke.yaml` | One epoch, encoder frozen. Minutes. Proves the path and measures what fits. |
 | full | `configs/full.yaml` | 8 epochs, full fine-tune. Hours. |
 
+**These are operator-run steps. Agents must not start fine-tuning or load a real
+checkpoint; see `AGENTS.md` §8 and `docs/TESTING.md`.**
+
 ### Order
 
 ```bash
@@ -1043,20 +1049,27 @@ So: do not gate on `min_confidence` until the calibration report says it was fit
 
 ## 12. Tests
 
+See [`docs/TESTING.md`](docs/TESTING.md) for test layers, focused commands, and rules for
+recording results. Run the smallest relevant test file or selector first; run the full suite
+only for broad cross-stage changes, release work, or an explicit request.
+
 ```bash
 pip install -e '.[dev]'
-pytest                 # the whole suite
-pytest -k discovery    # one area
-pytest -x -q           # stop at the first failure
+pytest -q --tb=short tests/test_corpus_discovery.py
+pytest -q --tb=short tests/test_dataset.py -k validation
 ```
 
 No test touches the network, a GPU, Laya weights or a production corpus document. Every
 external model call goes through one transport seam and is replaced by a scripted fake.
 
-461 tests, all passing as of the last run:
+The previous documentation recorded 461 passing tests, with different elapsed times in the
+README and PRD. No current test log is stored with the artifacts, so treat that count and its
+runtime as historical until the suite is run against the current tree. Agents may run
+focused tests in the existing environment. They must not run main fine-tuning, production
+generation, real Ollama calls, or real checkpoint evaluation.
 
 ```bash
-pytest -q    # 461 passed in 8.5s
+pytest -q --tb=short    # full suite; see TESTING.md for when to use it
 ```
 
 Coverage by area: recursive discovery, filename independence, Persian handling, Markdown
@@ -1117,22 +1130,16 @@ committed, and generated datasets may embed derived document text.
 
 ## 15. Limitations and risks
 
-1. **What has and has not been verified.** The **pytest suite has been executed
-   and passes** (461 tests, no network, no GPU, no Laya weights, no Ollama).
-   Stages 1–2 (`scan`, `process`) and the full stage composition (generate ->
-   split -> negatives -> label -> tasks -> build -> validate -> stats) have been
-   exercised against the real corpus through the scripted transport.
+1. **Execution provenance.** Earlier documentation records a 461-test run and
+   dataset-stage runs. The operator recalls running the pipeline, and local dataset
+   artifacts are present. There is no saved test log or complete per-stage manifest to
+   attribute every result or confirm it against the current tree. See `docs/TESTING.md`
+   for how to record future results.
 
-   **What has run against real software:** `generate` was run against the real
-   Ollama server with `qwen3.5:4b-q4_K_M`, in a temporary output directory,
-   until the question-generation and evidence-check calls were observed
-   returning valid Persian JSON. Its artifacts were deleted afterwards.
-
-   **What has not been verified:** any stage that uses the embedding model
-   (`negatives`, `tasks --task sufficiency`), any stage that loads Laya weights
-   (`validate --with-laya`, `train`, `evaluate`), and every number produced by
-   training or evaluation. No run has touched a GPU. The optimizer-update
-   budget, the learning curves and all metrics are predictions, not results.
+   **Training and model evaluation:** no checkpoint or evaluation report was found in the
+   inspected `outputs/` listing. Main fine-tuning and real checkpoint evaluation have not
+   been established by the available artifacts; agents must leave those steps to the
+   operator.
 
 2. **`EvalReport.cases` shape is not fully pinned** in the official docs. Macro-F1 and the
    confusion matrix are extracted defensively across several plausible shapes; if none
@@ -1179,10 +1186,11 @@ committed, and generated datasets may embed derived document text.
 
 ## 16. Manual execution order, condensed
 
-Per-stage detail is in [the complete runbook](#the-complete-runbook). The summary,
-with wall-clock measured on the development machine (20 documents → 80 chunks):
+Per-stage detail is in [the complete runbook](#the-complete-runbook). The table summarizes
+historical operator-reported timings for 20 documents and 80 chunks; no current benchmark
+log is available:
 
-| # | Command | Class | Measured | Dominated by |
+| # | Command | Class | Historical time | Dominated by |
 |---|---|---|---|---|
 | 0 | `preflight` | ollama | **1 s** | one `GET /api/tags` |
 | 1 | `scan` | local | <1 s | filesystem |

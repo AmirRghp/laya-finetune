@@ -10,6 +10,7 @@ Code shows what was built. This document explains what else was considered.
 | **Scope** | `src/laya_pipeline/` — 11,220 lines, 40 modules |
 | **Binding rules** | [`AGENTS.md`](../AGENTS.md) |
 | **Requirements** | [`PRD.md`](PRD.md) |
+| **Testing** | [`TESTING.md`](TESTING.md) |
 | **Runbook** | [README](../README.md#the-complete-runbook) |
 
 ---
@@ -155,7 +156,8 @@ thousands (known limitation 9).
 | `duplicate_query` | a normalised-identical query in two splits |
 | `paraphrased_query` | queries above `query_leakage_threshold` shingle-Jaccard |
 
-`leakage` must be `[]`. A non-empty list is a defect, not a warning.
+`leakage` must be `[]`. A non-empty list is a defect and must block acceptance of the
+split and downstream dataset; emitting a warning while continuing is insufficient.
 
 ### ADR-007: Ambiguity is a discard
 
@@ -393,14 +395,18 @@ so a leak can be caught specifically without swallowing other split failures.
 
 ## 9. Testing strategy
 
-461 tests, 7.8 s, no network / GPU / weights / production corpus document.
+The test suite uses synthetic Persian fixtures and mocked external calls. Focused pytest
+commands are the default feedback loop; the full suite is reserved for broad shared-contract
+changes, release work, or an explicit request. Agents may run short local tests but never
+main fine-tuning, real Ollama jobs, production generation, or real checkpoint evaluation.
+The operational commands and result-recording rules live in [`TESTING.md`](TESTING.md).
 
 | Level | What it covers |
 |---|---|
 | Unit | `ids`, `io`, `config`, `errors`, `schema`, `cache`, `markdown` |
-| Property-ish | Filename independence, determinism, idempotence, atomicity |
-| Integration | Stage composition through `FakeTransport` |
-| Regression | Each defect ever found has a named test |
+| Contract | Filename independence, determinism, idempotence, atomicity, split and row invariants |
+| Mocked integration | Stage composition through `FakeTransport` |
+| Regression | Review findings map to focused tests as they are addressed |
 
 Rules that shape the suite:
 
@@ -415,14 +421,17 @@ Rules that shape the suite:
 
 ## 10. Performance
 
-Measured on the development machine: 20 documents, 80 chunks, RTX 3050 Laptop (CPU for
-all data stages).
+The previous document revision recorded one operator-run dataset pipeline on a development
+machine with 20 documents, 80 chunks, and an RTX 3050 Laptop (CPU for data stages). The
+operator recalls that the run was likely theirs. Current saved artifacts contain aggregate
+counts but not stage timings, environment capture, or complete manifests, so the timings
+below are historical operator-reported values, not independently verified measurements.
 
 | Stage | Calls | Wall clock |
 |---|---|---|
-| `generate` | 320 | 15 min |
-| `negatives` | 2,635 | 85 min |
-| **total dataset** | ~3,700 | **~2.5 h** |
+| `generate` | 320 (historical report) | 15 min (historical report) |
+| `negatives` | 2,635 (historical report) | 85 min (historical report) |
+| **total dataset** | ~3,700 (historical report) | **~2.5 h (historical report)** |
 
 The model is the cost, not the pipeline. Two levers, in order of preference:
 
@@ -461,7 +470,7 @@ If any of these is false, the pipeline is defective — regardless of what the m
 5. An uncertain verdict discards; it never assigns.
 6. A non-source chunk is never auto-labelled irrelevant.
 7. Splitting precedes mining; mining never crosses a split boundary.
-8. `split.json.leakage` is empty.
+8. `split.json.leakage` is empty; a non-empty leakage report blocks acceptance and build.
 9. One `(query, chunk)` pair per row.
 10. Question definitions come from one place.
 11. An unmeasured metric is absent, never zero.

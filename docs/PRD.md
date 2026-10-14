@@ -2,12 +2,13 @@
 
 | | |
 |---|---|
-| **Status** | Implemented; dataset stages verified against real software, training not yet run |
-| **Version** | 1.0 |
+| **Status** | Dataset artifacts are present locally; prior execution is operator-reported and not attributable from every artifact; training/evaluation are not evidenced in the inspected outputs |
+| **Version** | 1.1 |
 | **Owner** | Amirreza Gholipour |
 | **Last updated** | 2026-10-14 |
 | **Binding rules** | [`AGENTS.md`](../AGENTS.md) — a violation is a defect, not a trade-off |
 | **Architecture** | [`ARCHITECTURE.md`](ARCHITECTURE.md) |
+| **Testing** | [`TESTING.md`](TESTING.md) |
 
 ---
 
@@ -106,13 +107,13 @@ Each requirement is testable and maps to at least one named test (AGENTS 7.5).
 | FR-3.2 | Negatives mined inside each split's *own* chunk pool | `stage_negatives` `_pool_for_split` |
 | FR-3.3 | Group splitting by document and by near-duplicate family | `test_dataset.py::TestLeakage` |
 | FR-3.4 | Four leakage classes detected: identical decision, source split, duplicate query, paraphrased query | `test_dataset.py` |
-| FR-3.5 | Leakage report must be empty; non-empty is a defect | AGENTS 6.8 |
+| FR-3.5 | Leakage report must be empty; non-empty blocks acceptance of the split | `test_leakage_prevents_dataset_build` (required, not yet implemented); AGENTS 6.8 |
 
 ### FR-4 Dataset emission
 
 | # | Requirement | Verified by |
 |---|---|---|
-| FR-4.1 | Rows are exactly `{state, questions, expected}` plus optional `tags`, `language` | `dataset/builder.py` |
+| FR-4.1 | Rows are exactly `{state, questions, expected}` plus optional `tags`, `language` | `test_build_row_has_only_laya_contract_fields` (required, not yet implemented) |
 | FR-4.2 | **One `(query, chunk)` pair per row** | AGENTS 3.5 |
 | FR-4.3 | Question definitions have **one** source of truth | `configs/default.yaml::laya.questions` |
 | FR-4.4 | `state` rendered from a config-driven Persian template; fingerprinted | `test_dataset.py::TestValidation` |
@@ -125,7 +126,7 @@ Each requirement is testable and maps to at least one named test (AGENTS 7.5).
 | FR-5.1 | Training through `laya.train.finetune` / `dry_run` in Python, not the CLI | AGENTS 3.3 |
 | FR-5.2 | Optimizer-update budget printed **before** any GPU spend | `training.py`, AGENTS 3.13 |
 | FR-5.3 | `train` refuses to start without `--yes` | `training.py` |
-| FR-5.4 | `eval_data` passed for every real run | AGENTS 3.9 |
+| FR-5.4 | Real training refuses to start unless non-empty held-out `eval_data` is passed | `test_train_requires_nonempty_validation_data` (required, not yet implemented); AGENTS 3.9 |
 | FR-5.5 | Label-encoding positive control available as the chance-level diagnostic | AGENTS 3.14 |
 
 ### FR-6 Reproducibility
@@ -151,43 +152,46 @@ Each requirement is testable and maps to at least one named test (AGENTS 7.5).
 
 | # | Requirement | Target | Status |
 |---|---|---|---|
-| NFR-1 | Dataset stage, cold, 20 docs / 80 chunks | ≤ 3 h on one local GPU-free box | **measured 2.5 h** |
-| NFR-2 | Full test suite runs without network, GPU, weights or a real corpus doc | 0 external deps | **461 tests, 7.8 s** |
+| NFR-1 | Dataset generation can be slow because teacher calls dominate | Runtime is recorded only when a run log includes environment and stage timings | **Historical operator-reported timing; not independently verified** |
+| NFR-2 | Tests run without network, GPU, weights or a real corpus document | 0 external model calls | **Target; current result unverified** |
 | NFR-3 | A crashed run never leaves a half-written artifact | 0 occurrences | atomic writes |
 | NFR-4 | Re-running an interrupted stage does not re-bill the model | 0 duplicate calls | content-addressed cache |
-| NFR-5 | Corpus is byte-identical before and after any pipeline run | 0 writes | verified |
+| NFR-5 | Corpus is byte-identical before and after any pipeline run | 0 writes | **Target; verify with a recorded before/after hash** |
 | NFR-6 | Full data pipeline runs without `laya` or `torch` installed | 0 imports | lazy import |
 
 ## 7. Success criteria
 
-Specific, testable, and currently honest about what has been executed.
+Specific, testable, and explicit about the source and confidence of each status.
 
 ### Data quality
 
-- [x] `generate` yields >2 questions per chunk from a 4B teacher, all grounded
-      *(measured: 225 examples from 80 chunks, 15 discarded)*
-- [x] Every negative carries a recorded acceptance reason
-      *(measured: 156 accepted, 1845 rejected by the teacher-says-answers gate)*
-- [x] `split.json.leakage == []` *(measured)*
-- [x] Split warnings surface the small-corpus problem rather than hiding it
-      *(measured: 3 families in validation and test)*
+- [x] Dataset artifacts exist for relevance, sufficiency, and routing
+      *(saved local snapshot: `outputs/dataset/stats.json`; operator attributes the prior
+      run to their own execution, but individual stage manifests are missing)*
+- [ ] Key-point source spans are verified against chunk text
+      *(not established by the current code review; see [`review.md`](../review.md))*
+- [ ] Split leakage is empty and blocks dataset acceptance when non-empty
+      *(requires regression coverage and code-path verification)*
 
 ### Engineering
 
-- [x] 461 tests pass, no network/GPU/weights
-- [x] Filename independence pinned by `test_filename_independence`
-- [x] Corpus unmodified after every run
-- [x] `preflight` catches a missing model in ~1 s instead of ~100 s per chunk
+- [ ] Focused tests pass for changed behavior, with commands and results recorded
+- [x] Filename independence has a named test: `test_filename_independence`
+- [ ] Corpus unchanged is verified by a before/after hash for each operator run
+- [ ] Preflight timing is recorded on the current environment
 
-### Training and evaluation — **not yet executed**
+### Training and evaluation — **no run is evidenced in the inspected local artifacts**
 
 - [ ] `train --dry-run` prints a budget above the chance-level threshold
 - [ ] `train smoke --yes` completes on the target GPU without OOM
 - [ ] `evaluate classify` beats the class prior on the held-out test split
 - [ ] Report carries a calibration caveat and no unmeasured metric
 
-**No number in this repository is a training or evaluation result.** Everything in the
-first two blocks was executed; everything in the third block is a target.
+The local artifacts establish that dataset outputs were saved. The operator recalls running
+the earlier pipeline, but current outputs do not establish who ran it or provide complete
+per-stage provenance. The 461-test count and historical elapsed times are not current
+verification results. No training checkpoint or evaluation report was present in the
+inspected `outputs/` files; training and model evaluation remain unverified.
 
 ## 8. Commands
 
@@ -211,7 +215,7 @@ laya-pipeline tasks --task sufficiency
 laya-pipeline tasks --task routing
 laya-pipeline build --task all && laya-pipeline validate --task all && laya-pipeline stats --task all
 
-# training (GPU)
+# training (GPU; operator only — agents do not run these commands)
 laya-pipeline train --task relevance --profile configs/dry_run.yaml --dry-run
 laya-pipeline train --task relevance --profile configs/smoke.yaml --out outputs/checkpoints/smoke --yes
 laya-pipeline train --task relevance --profile configs/full.yaml  --out outputs/checkpoints/relevance --yes
@@ -220,8 +224,8 @@ laya-pipeline train --task relevance --profile configs/full.yaml  --out outputs/
 laya-pipeline evaluate classify  --checkpoint outputs/checkpoints/relevance --task relevance --out outputs/evaluation
 laya-pipeline evaluate retrieval --split test --out outputs/evaluation
 
-# tests
-pytest
+# tests: focused by default; see TESTING.md
+pytest -q --tb=short tests/test_dataset.py
 ```
 
 ## 9. Project structure
@@ -231,8 +235,11 @@ corpus/          Source of truth. READ-ONLY. Not committed. Not in git history.
 prompts/         6 editable Persian prompt templates
 configs/         default.yaml (source of truth) + dry_run / smoke / full profiles
 src/laya_pipeline/   11,220 lines — pipeline
-tests/           4,077 lines — 461 tests, all external calls mocked
-docs/            This PRD and ARCHITECTURE.md
+tests/           Synthetic Persian fixtures and mocked external calls; see TESTING.md
+docs/            PRD, ARCHITECTURE, TESTING, and agent-skill guidance
+agent_skills/    Complete local copies of the project-selected agent skills
+docs/AGENT_SKILLS.md  Skill rankings, applicability, and local usage rules
+docs/TESTING.md  Test strategy and bounded verification commands
 outputs/         Generated artifacts. Not committed.
 AGENTS.md        Binding rules for every agent and human contributor
 ```
@@ -240,7 +247,11 @@ AGENTS.md        Binding rules for every agent and human contributor
 ## 10. Boundaries
 
 **Always**
-- Run `pytest` before committing.
+- Agents may run focused tests in the existing environment. Main fine-tuning, real model
+  evaluation, and production data generation remain operator-run. See [`TESTING.md`](TESTING.md).
+- Run the full suite only for broad cross-stage/shared-contract changes, release work, or an
+  explicit request. Do not use it after every small edit.
+- Do not repeat a test command when relevant files have not changed since its last run.
 - Read `configs/default.yaml` before changing behaviour; it is the source of truth.
 - Print the optimizer-update budget before any run that costs GPU time.
 - Record what was actually executed. Never report a target as a result.
@@ -280,24 +291,25 @@ AGENTS.md        Binding rules for every agent and human contributor
 | Q-3 | What is the real `EvalReport.cases` shape? | Macro-F1, confusion matrix | First `evaluate classify` |
 | Q-4 | Is a stronger teacher (7B+) worth the wall-clock? | Dataset size | Operator |
 | Q-5 | Should `negatives.ratio` rise above 1.0 for per-negative efficiency? | Label balance | After first evaluation |
+| Q-6 | When will the P1/P2 code-review findings and their required regression tests be addressed? | Reliable held-out data and reproducibility | Operator |
 
 ---
 
-## Appendix — measured baseline
+## Appendix — saved local artifact snapshot
 
-The one real end-to-end dataset run on the development machine, 2026-10-13. These are
-the numbers the pipeline produced, not estimates.
+The current local `outputs/dataset/stats.json` contains these counts. The operator reports
+that the dataset run was likely theirs. Missing manifests for several stages mean these
+files do not provide complete run attribution or provenance. Counts are saved output
+records, not model-quality results.
 
 | Metric | Value |
 |---|---|
 | Documents | 20 |
-| Chunks | 80 (min 160 / median 180 / max 202 tokens, 0 oversized) |
-| Positives generated | 225 |
-| Questions discarded (unanswerable) | 15 |
-| Split | train 160 / validation 33 / test 32, across 20 families (14/3/3) |
-| Negatives accepted | 156 |
-| Negatives unfilled (pool too small) | 69 |
-| Teacher rejections in mining | 1845 |
-| `generate` wall clock | 15 min (320 calls) |
-| `negatives` wall clock | 85 min (2,635 verification calls) |
-| Leakage findings | 0 |
+| Chunks | 80 (estimated tokens: min 160 / median 180 / max 202, 0 oversized) |
+| Relevance positives / negatives | 225 / 156 |
+| Relevance split | train 271 / validation 60 / test 50 |
+| Sufficiency split | train 160 / validation 33 / test 32 |
+| Routing split | train 139 / validation 31 / test 29 |
+| Token-count source | Estimated; recorded in `outputs/chunks/manifest.json` |
+| Stage timings and model-call counts | Historical values from the earlier document revision; no run log was found to verify them |
+| Training/evaluation artifacts | Not present in the inspected `outputs/` listing |
