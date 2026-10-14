@@ -27,6 +27,8 @@ from typing import Any, Dict, List, Optional, Sequence
 from . import __version__
 from .config import load_config
 from .errors import ConfigError, PipelineError
+from .ids import content_hash
+from .io import file_sha256, read_jsonl, write_manifest
 from .logging_setup import configure_logging, get_logger
 from .tasks import TASKS, resolve_tasks
 
@@ -396,7 +398,7 @@ def _run_preflight(args: argparse.Namespace) -> int:
 
 
 def _run_train(args: argparse.Namespace) -> Any:
-    from . import training
+    from . import stages, training
 
     config = args.config_obj
     task = args.task
@@ -442,6 +444,21 @@ def _run_train(args: argparse.Namespace) -> Any:
     if not args.out:
         raise PipelineError("a real training run needs --out <checkpoint directory>")
 
+    stages._load_split_report_obj(config)
+    if not eval_path.is_file():
+        raise PipelineError(
+            "a real training run requires a validation JSONL file for held-out eval_data"
+        )
+    eval_rows = list(read_jsonl(eval_path))
+    if not any(
+        isinstance(row.get("state"), str) and row["state"].strip()
+        for row in eval_rows
+    ):
+        raise PipelineError(
+            f"validation file {eval_path} is empty or has no usable rows; real training "
+            "requires non-empty held-out eval_data"
+        )
+
     summary = training.run_finetune(config, plan)
     report = summary.get("train_report") or {}
     return {
@@ -462,6 +479,7 @@ def _run_train(args: argparse.Namespace) -> Any:
 # --------------------------------------------------------------------------- #
 def _run_evaluate(args: argparse.Namespace) -> Any:
     from .evaluation import compare_runs, evaluate_checkpoint, render_markdown, write_report
+    from . import stages
 
     config = args.config_obj
     what = getattr(args, "evaluate_command", None)
@@ -473,6 +491,7 @@ def _run_evaluate(args: argparse.Namespace) -> Any:
             raise PipelineError(
                 f"{data_path} does not exist. Run `build --task {target}` first."
             )
+        stages._load_split_report_obj(config)
         runs: Dict[str, Any] = {}
         label = args.label or args.checkpoint
         runs[label] = evaluate_checkpoint(
@@ -498,15 +517,32 @@ def _run_evaluate(args: argparse.Namespace) -> Any:
             runs = {"base": runs["base"], label: runs[label]}
         comparison = compare_runs(runs, title=f"Classification — {target} / test split")
         if args.out:
-            write_report(comparison, Path(args.out), config.corpus_dir)
+            directory = Path(args.out)
+            write_report(comparison, directory, config.corpus_dir)
+            write_manifest(
+                directory,
+                "evaluate:classify",
+                config_hash=config.config_hash,
+                seed=config.project.seed,
+                counts={"runs": len(runs)},
+                extra={"task": target},
+                inputs={
+                    "test_dataset_sha256": file_sha256(data_path),
+                    "checkpoint_id_sha256": content_hash(args.checkpoint, fold=False),
+                    "base_checkpoint_id_sha256": content_hash(
+                        config.evaluation.base_model, fold=False
+                    ),
+                },
+                corpus_dir=config.corpus_dir,
+            )
         else:
             print(render_markdown(comparison))
         return comparison
 
     if what == "retrieval":
-        from . import stages
         from .evaluation import evaluate_retrieval
 
+        stages._load_split_report_obj(config)
         examples = stages.load_examples(config)
         chunks = stages.load_chunks(config)
         from .evaluation import build_queries
@@ -519,6 +555,28 @@ def _run_evaluate(args: argparse.Namespace) -> Any:
 
             ensure_dir(directory)
             write_json(directory / "retrieval.json", report, config.corpus_dir)
+            write_manifest(
+                directory,
+                "evaluate:retrieval",
+                config_hash=config.config_hash,
+                seed=config.project.seed,
+                counts={
+                    "queries": report["queries_scored"],
+                    "indexed_chunks": report["indexed_chunks"],
+                },
+                inputs={
+                    "labeled_examples_sha256": file_sha256(
+                        config.stage_dir("labels") / "labeled.jsonl"
+                    ),
+                    "chunks_sha256": file_sha256(
+                        config.stage_dir("chunks") / "chunks.jsonl"
+                    ),
+                    "split_sha256": file_sha256(
+                        config.stage_dir("split") / "split.json"
+                    ),
+                },
+                corpus_dir=config.corpus_dir,
+            )
         return report
 
     raise ConfigError("evaluate needs a subcommand: `classify` or `retrieval`")

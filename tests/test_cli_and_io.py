@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
+import argparse
 from pathlib import Path
 
 import pytest
 
-from laya_pipeline.cli import build_parser, main
-from laya_pipeline.errors import ConfigError, PipelineError
+from laya_pipeline.cli import _run_train, build_parser, main
+from laya_pipeline.errors import ConfigError, LeakageError, PipelineError
 from laya_pipeline.io import (
     read_json,
     read_jsonl,
@@ -403,6 +404,7 @@ class TestAtomicWrites:
         payload = read_json(tmp_path / "manifest.json")
         assert payload["stage"] == "build"
         assert payload["inputs"]["base"] == "x"
+        assert payload["stage_version"]
 
 
 class TestReads:
@@ -429,3 +431,77 @@ def test_shipped_prompts_exist() -> None:
 def test_shipped_configs_exist() -> None:
     for name in ("default", "dry_run", "smoke", "full"):
         assert (REPO_ROOT / "configs" / f"{name}.yaml").is_file()
+
+
+def test_real_training_rejects_missing_or_empty_validation(
+    config, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from laya_pipeline import training
+
+    task_dir = config.stage_dir("dataset") / "relevance"
+    task_dir.mkdir(parents=True)
+    write_jsonl(task_dir / "train.jsonl", [{"state": "نمونه"}])
+    override_eval = tmp_path / "non_validation_eval.jsonl"
+    write_jsonl(override_eval, [{"state": "نمونه"}])
+    config.training.eval_data = str(override_eval)
+    split_dir = config.stage_dir("split")
+    split_dir.mkdir(parents=True)
+    write_json(split_dir / "split.json", {"leakage": []})
+    monkeypatch.setattr(
+        training,
+        "run_finetune",
+        lambda *_args: pytest.fail("fine-tuning must not run without validation rows"),
+    )
+    args = argparse.Namespace(
+        config_obj=config,
+        task="relevance",
+        positive_control=False,
+        out=str(tmp_path / "checkpoint"),
+        profile="",
+        dry_run=False,
+        yes=True,
+    )
+    with pytest.raises(PipelineError, match="requires a validation JSONL"):
+        _run_train(args)
+
+    write_jsonl(task_dir / "validation.jsonl", [])
+    with pytest.raises(PipelineError, match="is empty"):
+        _run_train(args)
+
+    write_jsonl(task_dir / "validation.jsonl", [{"state": ""}])
+    with pytest.raises(PipelineError, match="no usable rows"):
+        _run_train(args)
+
+
+def test_leaky_split_blocks_dataset_build(config) -> None:
+    from laya_pipeline import stages
+
+    split_dir = config.stage_dir("split")
+    split_dir.mkdir(parents=True)
+    write_json(split_dir / "split.json", {"leakage": [{"kind": "duplicate_query"}]})
+    with pytest.raises(LeakageError, match="leakage finding"):
+        stages.stage_build(config, ["relevance"])
+
+
+def test_validate_and_stats_write_stage_manifests(config) -> None:
+    from laya_pipeline import stages
+
+    split_dir = config.stage_dir("split")
+    split_dir.mkdir(parents=True)
+    write_json(split_dir / "split.json", {"leakage": []})
+    stages.stage_validate(config, [])
+    dataset_dir = config.stage_dir("dataset")
+    validation_manifest = read_json(dataset_dir / "validation.manifest.json")
+    assert validation_manifest["stage"] == "validate"
+    assert validation_manifest["stage_version"]
+
+    labels_dir = config.stage_dir("labels")
+    labels_dir.mkdir(parents=True)
+    write_jsonl(labels_dir / "labeled.jsonl", [])
+    chunks_dir = config.stage_dir("chunks")
+    chunks_dir.mkdir(parents=True)
+    write_jsonl(chunks_dir / "chunks.jsonl", [])
+    stages.stage_stats(config, [])
+    stats_manifest = read_json(dataset_dir / "stats.manifest.json")
+    assert stats_manifest["stage"] == "stats"
+    assert stats_manifest["stage_version"]

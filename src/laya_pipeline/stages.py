@@ -21,6 +21,7 @@ import random
 from pathlib import Path
 from typing import Any, Dict, List, Mapping, Optional, Sequence
 
+from . import __version__
 from .chunking import Chunker
 from .config import Config
 from .corpus import (
@@ -45,9 +46,11 @@ from .dataset import (
     write_dataset,
 )
 from .dataset.split import SplitReport
-from .errors import PipelineError
+from .errors import LeakageError, PipelineError
+from .ids import content_hash
 from .io import (
     ensure_dir,
+    file_sha256,
     read_json,
     read_jsonl,
     write_json,
@@ -119,6 +122,30 @@ def _rng(config: Config, salt: str = "") -> random.Random:
     """A seeded generator. The salt keeps stages independent but reproducible."""
     seed = config.project.seed + (sum(ord(ch) for ch in salt) if salt else 0)
     return random.Random(seed)
+
+
+def _manifest(
+    config: Config,
+    stage: str,
+    directory: Path,
+    counts: Mapping[str, Any],
+    inputs: Mapping[str, str],
+    manifest_name: str = "manifest.json",
+) -> None:
+    write_manifest(
+        directory,
+        stage=stage,
+        config_hash=config.config_hash,
+        seed=config.project.seed,
+        counts=counts,
+        inputs=inputs,
+        corpus_dir=config.corpus_dir,
+        manifest_name=manifest_name,
+    )
+
+
+def _file_hash(path: Path) -> str:
+    return file_sha256(path)
 
 
 def load_chunks(config: Config, stage: str = CHUNK_DIR) -> List[Chunk]:
@@ -204,13 +231,19 @@ def _load_split_report_obj(config: Config) -> SplitReport:
             "would let a test document's text reach a training row."
         )
     raw = read_json(path)
-    return SplitReport(
+    report = SplitReport(
         family_of=dict(raw.get("source_to_family", {})),
         assignment=dict(raw.get("assignment", {})),
         stats=dict(raw.get("stats", {})),
         warnings=list(raw.get("warnings", [])),
         leakage=list(raw.get("leakage", [])),
     )
+    if report.leakage:
+        raise LeakageError(
+            f"split artifact {path} contains {len(report.leakage)} leakage finding(s); "
+            "downstream stages and dataset builds are blocked"
+        )
+    return report
 
 
 # --------------------------------------------------------------------------- #
@@ -238,6 +271,7 @@ def stage_scan(config: Config) -> Dict[str, Any]:
         config_hash=config.config_hash,
         seed=config.project.seed,
         counts=payload,
+        inputs={"corpus_sha256": content_hash(*(doc.content_id for doc in documents), fold=False)},
         corpus_dir=config.corpus_dir,
     )
     if duplicates:
@@ -284,7 +318,10 @@ def stage_process(config: Config) -> Dict[str, Any]:
         config_hash=config.config_hash,
         seed=config.project.seed,
         counts=payload,
-        inputs={"token_source": stats.token_source},
+        inputs={
+            "corpus_sha256": content_hash(*(doc.content_id for doc in documents), fold=False),
+            "token_source_sha256": content_hash(stats.token_source, fold=False),
+        },
         corpus_dir=config.corpus_dir,
     )
     return payload
@@ -304,9 +341,30 @@ def stage_generate(config: Config, *, resume: bool = True) -> Dict[str, Any]:
     )
 
     existing: Dict[str, List[GeneratedExample]] = {}
+    path = config.stage_dir(GENERATE_DIR) / "relevance.jsonl"
+    prompt_fingerprint = prompts.template("questions").fingerprint
+    inputs = {
+        "chunks_sha256": _file_hash(config.stage_dir(CHUNK_DIR) / "chunks.jsonl"),
+        "prompt_sha256": prompt_fingerprint,
+    }
     if resume:
-        path = config.stage_dir(GENERATE_DIR) / "relevance.jsonl"
         if path.is_file():
+            manifest_path = path.parent / "manifest.json"
+            if not manifest_path.is_file():
+                raise PipelineError(
+                    f"cannot safely resume {path}: its manifest is missing; rerun with "
+                    "--no-resume to regenerate"
+                )
+            manifest = read_json(manifest_path)
+            if (
+                manifest.get("stage_version") != __version__
+                or manifest.get("config_hash") != config.config_hash
+                or manifest.get("inputs") != inputs
+            ):
+                raise PipelineError(
+                    f"cannot safely resume {path}: config, chunks, or prompt changed; "
+                    "rerun with --no-resume to regenerate"
+                )
             for row in read_jsonl(path):
                 example = GeneratedExample.from_dict(row)
                 existing.setdefault(example.source_chunk_id, []).append(example)
@@ -323,6 +381,13 @@ def stage_generate(config: Config, *, resume: bool = True) -> Dict[str, Any]:
         config.stage_dir(GENERATE_DIR) / "relevance.report.json",
         report.to_dict(),
         config.corpus_dir,
+    )
+    _manifest(
+        config,
+        "generate",
+        path.parent,
+        {"examples": len(report.examples), "stats": report.stats, "failures": len(report.failures)},
+        inputs,
     )
     return {
         "examples": len(report.examples),
@@ -356,15 +421,39 @@ def stage_split(config: Config) -> Dict[str, Any]:
         positives.append(_positive_from(example, chunk, positive_label))
 
     report = assign_splits(positives, config, _chunks_by_source(chunks), _rng(config, "split"))
-    assigned = apply_splits(positives, report)
-
     directory = ensure_dir(config.stage_dir(SPLIT_DIR))
-    _write_examples(config, SPLIT_DIR, "positives.jsonl", assigned)
     write_json(directory / "split.json", report.to_dict(), config.corpus_dir)
     write_json(
         directory / "dropped.json",
         {"dropped": dropped, "stats": example_stats(config, positives)},
         config.corpus_dir,
+    )
+    if report.leakage:
+        _manifest(
+            config,
+            "split",
+            directory,
+            {"positives": len(positives), "leakage": len(report.leakage)},
+            {
+                "generated_sha256": _file_hash(config.stage_dir(GENERATE_DIR) / "relevance.jsonl"),
+                "chunks_sha256": _file_hash(config.stage_dir(CHUNK_DIR) / "chunks.jsonl"),
+            },
+        )
+        raise LeakageError(
+            f"split found {len(report.leakage)} leakage finding(s); no positives were "
+            "published and downstream dataset stages are blocked"
+        )
+    assigned = apply_splits(positives, report)
+    _write_examples(config, SPLIT_DIR, "positives.jsonl", assigned)
+    _manifest(
+        config,
+        "split",
+        directory,
+        {"positives": len(assigned), "leakage": 0},
+        {
+            "generated_sha256": _file_hash(config.stage_dir(GENERATE_DIR) / "relevance.jsonl"),
+            "chunks_sha256": _file_hash(config.stage_dir(CHUNK_DIR) / "chunks.jsonl"),
+        },
     )
     return {
         "positives": len(assigned),
@@ -449,6 +538,17 @@ def stage_negatives(config: Config) -> Dict[str, Any]:
         {"stats": totals, "rejected": rejected[:2000], "rejected_total": len(rejected)},
         config.corpus_dir,
     )
+    _manifest(
+        config,
+        "negatives",
+        directory,
+        {"negatives": len(collected), "stats": totals, "rejected": len(rejected)},
+        {
+            "positives_sha256": _file_hash(config.stage_dir(SPLIT_DIR) / "positives.jsonl"),
+            "split_sha256": _file_hash(config.stage_dir(SPLIT_DIR) / "split.json"),
+            "chunks_sha256": _file_hash(config.stage_dir(CHUNK_DIR) / "chunks.jsonl"),
+        },
+    )
     return {"negatives": len(collected), "stats": totals, "rejected": len(rejected)}
 
 
@@ -476,6 +576,7 @@ def _with_split(example: LabeledExample, split: str) -> LabeledExample:
 
 def stage_label(config: Config, *, review_dir: Optional[Path] = None) -> Dict[str, Any]:
     """Teacher-label the mined negatives and produce a human review queue."""
+    _load_split_report_obj(config)
     positives = load_examples(config, SPLIT_DIR, "positives.jsonl")
     negatives = load_examples(config, NEGATIVE_DIR, "negatives.jsonl")
     everything = positives + negatives
@@ -503,6 +604,23 @@ def stage_label(config: Config, *, review_dir: Optional[Path] = None) -> Dict[st
         "review_csv": str(csv_path),
     }
     write_json(directory / "labels.json", payload, config.corpus_dir)
+    _manifest(
+        config,
+        "label",
+        directory,
+        {"labeled": len(report.examples), "review_queue": len(queue)},
+        {
+            "positives_sha256": _file_hash(config.stage_dir(SPLIT_DIR) / "positives.jsonl"),
+            "negatives_sha256": _file_hash(config.stage_dir(NEGATIVE_DIR) / "negatives.jsonl"),
+        },
+    )
+    _manifest(
+        config,
+        "review",
+        csv_path.parent,
+        {"review_queue": len(queue)},
+        {"labels_sha256": _file_hash(directory / "labeled.jsonl")},
+    )
     return payload
 
 
@@ -567,18 +685,43 @@ def stage_tasks(config: Config, task: str, *, top_k: int = 3) -> Dict[str, Any]:
 
     existing = []
     path = config.stage_dir(LABEL_DIR) / "labeled.jsonl"
+    previous_labels_sha256 = _file_hash(path)
     if path.is_file():
         existing = [e for e in load_examples(config) if e.task != task]
 
     combined = existing + produced
     _write_examples(config, LABEL_DIR, "labeled.jsonl", combined)
     task_dir = ensure_dir(config.stage_dir(task))
+    task_report = {"task": task, "examples": len(produced), "total_labeled": len(combined)}
     write_json(
         task_dir / f"{task}.report.json",
         {"task": task, "examples": len(produced)},
         config.corpus_dir,
     )
-    return {"task": task, "examples": len(produced), "total_labeled": len(combined)}
+    _manifest(
+        config,
+        f"tasks:{task}:labeled",
+        config.stage_dir(LABEL_DIR),
+        {"labeled": len(combined)},
+        {
+            "previous_labeled_sha256": previous_labels_sha256,
+            "generated_sha256": _file_hash(config.stage_dir(GENERATE_DIR) / "relevance.jsonl"),
+            "split_sha256": _file_hash(config.stage_dir(SPLIT_DIR) / "split.json"),
+        },
+    )
+    _manifest(
+        config,
+        task,
+        task_dir,
+        task_report,
+        {
+            "generated_sha256": _file_hash(config.stage_dir(GENERATE_DIR) / "relevance.jsonl"),
+            "split_sha256": _file_hash(config.stage_dir(SPLIT_DIR) / "split.json"),
+            "chunks_sha256": _file_hash(config.stage_dir(CHUNK_DIR) / "chunks.jsonl"),
+            "previous_labeled_sha256": previous_labels_sha256,
+        },
+    )
+    return task_report
 
 
 def _pool_object(pool: Mapping[str, Chunk]) -> "Any":
@@ -594,6 +737,7 @@ def stage_build(config: Config, tasks: Sequence[str], *, positive_control: bool 
     A positive-control build goes to ``dataset/<task>-control/`` so it can never
     be mistaken for, or trained in place of, the real dataset.
     """
+    _load_split_report_obj(config)
     examples = load_examples(config)
     directory = ensure_dir(config.stage_dir(DATASET_DIR))
     suffix = "-control" if positive_control else ""
@@ -633,6 +777,7 @@ def stage_validate(
     """
     from .dataset import load_rows, validate_rows, validate_with_tokenizer
 
+    _load_split_report_obj(config)
     directory = ensure_dir(config.stage_dir(DATASET_DIR))
     reports: Dict[str, Any] = {}
     problems: List[str] = []
@@ -661,6 +806,31 @@ def stage_validate(
 
     payload = {"tasks": reports, "problems": problems, "with_laya": with_laya}
     write_json(directory / "validation.json", payload, config.corpus_dir)
+    _manifest(
+        config,
+        "validate",
+        directory,
+        {"tasks": len(reports), "problems": len(problems), "with_laya": with_laya},
+        {
+            f"{task}_{split}_sha256": _file_hash(directory / task / f"{split}.jsonl")
+            for task in tasks
+            for split in ("train", "validation", "test")
+            if (directory / task / f"{split}.jsonl").is_file()
+        },
+    )
+    _manifest(
+        config,
+        "validate",
+        directory,
+        {"tasks": len(reports), "problems": len(problems), "with_laya": with_laya},
+        {
+            f"{task}_{split}_sha256": _file_hash(directory / task / f"{split}.jsonl")
+            for task in tasks
+            for split in ("train", "validation", "test")
+            if (directory / task / f"{split}.jsonl").is_file()
+        },
+        manifest_name="validation.manifest.json",
+    )
     if problems:
         raise PipelineError(
             f"{len(problems)} validation problem(s); see "
@@ -671,6 +841,7 @@ def stage_validate(
 
 def stage_stats(config: Config, tasks: Sequence[str]) -> Dict[str, Any]:
     """Counts, distributions and warnings across the built datasets."""
+    _load_split_report_obj(config)
     examples = load_examples(config)
     chunks = load_chunks(config)
     payload = {
@@ -686,5 +857,26 @@ def stage_stats(config: Config, tasks: Sequence[str]) -> Dict[str, Any]:
         directory / "stats.md",
         render_markdown("Dataset statistics", payload),
         config.corpus_dir,
+    )
+    _manifest(
+        config,
+        "stats",
+        directory,
+        {"chunks": len(chunks), "examples": len(examples), "tasks": len(tasks)},
+        {
+            "chunks_sha256": _file_hash(config.stage_dir(CHUNK_DIR) / "chunks.jsonl"),
+            "examples_sha256": _file_hash(config.stage_dir(LABEL_DIR) / "labeled.jsonl"),
+        },
+    )
+    _manifest(
+        config,
+        "stats",
+        directory,
+        {"chunks": len(chunks), "examples": len(examples), "tasks": len(tasks)},
+        {
+            "chunks_sha256": _file_hash(config.stage_dir(CHUNK_DIR) / "chunks.jsonl"),
+            "examples_sha256": _file_hash(config.stage_dir(LABEL_DIR) / "labeled.jsonl"),
+        },
+        manifest_name="stats.manifest.json",
     )
     return payload

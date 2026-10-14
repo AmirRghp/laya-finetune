@@ -187,6 +187,9 @@ false reasoning. An unrelated chunk *can* answer a query.
 4. **the teacher says it does not answer the query** — the only gate that can say
    something about the *query* rather than about provenance.
 
+If teacher verification is disabled, negative mining is skipped and no negative
+rows are emitted; an unverified candidate is never promoted to a training label.
+
 Everything rejected is written out with its reason, so the gates are auditable rather
 than trusted.
 
@@ -341,7 +344,7 @@ while remaining schema-valid. That was a real defect, caught in review.
 | `scan` | `corpus/` | `scan/` | local |
 | `process` | `scan/` | `chunks/` | local |
 | `generate` | `chunks/` | `generated/` | ollama |
-| `split` | `generated/` | `split/` | local |
+| `split` | `generated/` | `split/` (leakage blocks publication and every downstream consumer) | local |
 | `negatives` | `split/` + `chunks/` | `negatives/` | ollama |
 | `label` | `negatives/` | `labels/`, `review/` | ollama |
 | `tasks` | `split/` + `chunks/` | `tasks/<task>/` | ollama |
@@ -353,6 +356,9 @@ while remaining schema-valid. That was a real defect, caught in review.
 
 Each stage reads the previous artifact rather than shared memory, so any stage is
 independently invokable and the pipeline resumes from any point.
+Generation resume additionally requires matching config, chunk-content and prompt
+fingerprints; stale or legacy artifacts require an explicit `--no-resume` rebuild.
+Every stage manifest records hashes for its inputs and the installed stage version.
 
 ## 7. Configuration
 

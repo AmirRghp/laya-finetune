@@ -128,7 +128,6 @@ def evaluate_retrieval(
                     backend, config.ollama, config.chunking
                 )
         resolved_index = build_index(backend, chunks, embed_fn=resolved_embed)
-        resolved_embed = embed_fn
 
     id_to_chunk = {chunk.chunk_id: chunk for chunk in chunks}
     per_query: List[Dict[str, Any]] = []

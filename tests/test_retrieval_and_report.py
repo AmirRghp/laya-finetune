@@ -18,7 +18,12 @@ from laya_pipeline.evaluation.classification import (
     per_class_scores,
 )
 from laya_pipeline.evaluation.report import compare_runs, render_markdown
-from laya_pipeline.evaluation.retrieval import build_queries
+from laya_pipeline.evaluation import retrieval as retrieval_module
+from laya_pipeline.evaluation.retrieval import (
+    RetrievalQuery,
+    build_queries,
+    evaluate_retrieval,
+)
 from laya_pipeline.ids import normalize_text, stable_id
 from laya_pipeline.retrieval import (
     BM25Index,
@@ -325,3 +330,25 @@ def test_document_source_is_unused_here() -> None:
 
 def test_path_fixture_is_available(tmp_path: Path) -> None:
     assert tmp_path.is_dir()
+
+
+def test_retrieval_keeps_the_default_embedding_function_for_queries(
+    config, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    config.evaluation.retrieval_backend = "ollama"
+    vectors = {
+        SAMPLES[0].text: [1.0, 0.0],
+        SAMPLES[1].text: [0.0, 1.0],
+        "پرسش دربارهٔ مرخصی": [1.0, 0.0],
+    }
+    def fake_embed(texts: list[str]) -> np.ndarray:
+        return np.asarray([vectors[text] for text in texts], dtype="float32")
+
+    monkeypatch.setattr(retrieval_module, "make_embed_fn", lambda *_args: fake_embed)
+    result = evaluate_retrieval(
+        config,
+        SAMPLES[:2],
+        [RetrievalQuery("پرسش دربارهٔ مرخصی", [SAMPLES[0].chunk_id])],
+        ks=[1],
+    )
+    assert result["mean"]["recall@1"] == 1.0

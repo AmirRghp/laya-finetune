@@ -208,7 +208,7 @@ class QuestionGenerator:
             seen_queries.add(query)
 
             raw_points = [str(p) for p in (entry.get("key_points") or []) if str(p).strip()]
-            key_points = grounded_key_points(raw_points, raw_points, settings.max_key_points)
+            key_points = grounded_key_points(raw_points, chunk.text, settings.max_key_points)
             if not key_points:
                 report.bump("questions_rejected_no_key_points")
                 continue

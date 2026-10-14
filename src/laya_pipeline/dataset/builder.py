@@ -27,7 +27,7 @@ from ..config import Config
 from ..dataset.records import SPLITS, LabeledExample
 from ..errors import ConfigError, DatasetValidationError
 from ..ids import content_hash, short_hash
-from ..io import ensure_dir, write_json, write_jsonl, write_manifest
+from ..io import ensure_dir, file_sha256, write_json, write_jsonl, write_manifest
 from ..logging_setup import get_logger
 from ..tokenizer import TokenCounter
 
@@ -182,17 +182,6 @@ def build_row(
         "expected": {question_id: example.label},
         "tags": tags,
         "language": config.laya.language,
-        # Provenance that Laya ignores but a reviewer needs.
-        "metadata": {
-            "example_id": example.example_id,
-            "source_id": example.source_id,
-            "relpath": example.relpath,
-            "chunk_ids": example.chunk_ids,
-            "split": example.split,
-            "label_source": example.label_source,
-            "confidence": example.confidence,
-            "strategy": example.strategy,
-        },
     }
 
 
@@ -284,10 +273,13 @@ def write_dataset(
         counts=counts,
         inputs={
             "questions_sha256": fingerprint,
-            "question_id": artifact.task,
-            "base_model": config.laya.base_model,
-            "max_len": str(config.laya.max_len),
-            "head_max_len": str(config.laya.head_max_len),
+            "question_id_sha256": content_hash(artifact.task, fold=False),
+            "base_model_sha256": content_hash(config.laya.base_model, fold=False),
+            "max_len_sha256": content_hash(str(config.laya.max_len), fold=False),
+            "head_max_len_sha256": content_hash(str(config.laya.head_max_len), fold=False),
+            "examples_sha256": file_sha256(
+                config.stage_dir("labels") / "labeled.jsonl"
+            ),
         },
         extra=extra_manifest,
         corpus_dir=corpus_dir,

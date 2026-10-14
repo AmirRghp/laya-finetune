@@ -18,6 +18,7 @@ import tempfile
 from pathlib import Path
 from typing import Any, Iterable, Iterator, Mapping, Sequence
 
+from . import __version__
 from .errors import ConfigError, PipelineError
 
 __all__ = [
@@ -252,6 +253,7 @@ def write_manifest(
     inputs: Mapping[str, str] | None = None,
     extra: Mapping[str, Any] | None = None,
     corpus_dir: Path | None = None,
+    manifest_name: str = "manifest.json",
 ) -> Path:
     """Write ``manifest.json`` describing exactly what produced this artifact.
 
@@ -260,6 +262,7 @@ def write_manifest(
     """
     payload: dict[str, Any] = {
         "stage": stage,
+        "stage_version": __version__,
         "seed": seed,
         "config_hash": config_hash,
         "counts": dict(counts),
@@ -267,4 +270,4 @@ def write_manifest(
     }
     if extra:
         payload["extra"] = dict(extra)
-    return write_json(Path(directory) / "manifest.json", payload, corpus_dir)
+    return write_json(Path(directory) / manifest_name, payload, corpus_dir)

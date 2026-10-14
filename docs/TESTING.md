@@ -81,13 +81,25 @@ Give explicit tests to high-risk contracts:
 - Empty/malformed configuration and unknown keys.
 - Structural Markdown boundaries and oversized blocks.
 - Negative evidence gates, uncertain answers, and answer-string leakage.
-- Family-level splits, identical decisions, duplicate queries, paraphrase leakage, and
-  split-local negative pools.
-- Exact Laya row keys, one decision per row, configured question schema, and valid split
-  tags.
+- `test_tasks_and_negatives.py::test_a_generated_key_point_absent_from_the_chunk_is_rejected`
+  and `test_disabling_teacher_verification_emits_no_negatives` cover grounded positives and
+  fail-closed negative verification.
+- Family-level splits, identical decisions, duplicate queries, paraphrase leakage, seeded
+  tie-breaking, and split-local negative pools; `test_tasks_and_negatives.py::test_split_does_not_publish_positives_when_leakage_is_found`
+  covers split publication, while `test_cli_and_io.py::test_leaky_split_blocks_dataset_build`
+  covers the downstream build gate.
+- `test_dataset.py::TestRows::test_a_positive_becomes_a_valid_row` and
+  `test_unexpected_fields_are_rejected` cover exact Laya row keys, one decision per row,
+  configured question schema, and valid split tags.
 - Atomic writes, output path protection, cache identity, and manifest contents.
-- CLI safety gates for real training, including the required held-out validation data.
-- Retrieval evaluation with both lexical and embedding backends, using fake embeddings.
+- `test_cli_and_io.py::test_real_training_rejects_missing_or_empty_validation` covers the
+  held-out validation gate for real training.
+- Retrieval evaluation with both lexical and embedding backends, using fake embeddings;
+  `test_retrieval_and_report.py::test_retrieval_keeps_the_default_embedding_function_for_queries`
+  covers the default embedding path.
+- `test_tasks_and_negatives.py::test_generate_refuses_resume_when_prompt_changed` covers
+  stale generation artifacts; `test_cli_and_io.py::TestAtomicWrites::test_manifest_records_its_inputs`
+  and `test_validate_and_stats_write_stage_manifests` cover manifest fields and stage outputs.
 
 New behavioral requirements must name their test in `docs/PRD.md`. Tests may not be
 weakened, skipped, or deleted to reduce runtime.

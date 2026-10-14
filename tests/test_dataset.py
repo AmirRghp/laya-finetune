@@ -184,6 +184,14 @@ class TestAssignment:
 
 
 class TestLeakage:
+    def test_seed_changes_equal_weight_family_ties(
+        self, config: Config, many_chunks: list[Chunk]
+    ) -> None:
+        examples = [example_for(c, f"پرسش {c.ordinal}؟") for c in many_chunks]
+        first = assign_splits(examples, config, chunks_by_source(many_chunks), random.Random(1))
+        second = assign_splits(examples, config, chunks_by_source(many_chunks), random.Random(7))
+        assert first.assignment != second.assignment
+
     def test_identical_decisions_across_splits_are_found(self, config: Config) -> None:
         chunk = chunks_for("متن")[0]
         train = example_for(chunk, "پرسش یکسان؟", split="train")
@@ -267,7 +275,7 @@ class TestRows:
     def test_a_positive_becomes_a_valid_row(self, config: Config) -> None:
         chunk = chunks_for("متن نمونه برای آزمون")[0]
         row = build_rows(config, [example_for(chunk, "پرسش؟", split="train")], "relevance").rows[0]
-        assert set(row) >= {"state", "questions", "expected", "tags", "language"}
+        assert set(row) == {"state", "questions", "expected", "tags", "language"}
         assert row["expected"]["relevance"] == "relevant"
         assert row["questions"]["relevance"] == question_definition(config, "relevance")
 
@@ -383,26 +391,28 @@ class TestValidation:
     def test_a_missing_split_is_reported(self, config: Config) -> None:
         rows = good_rows(config, 1)
         rows[0]["tags"] = ["task:relevance"]
-        rows[0].pop("metadata", None)
         report = validate_rows(config, rows, "relevance")
         assert any("split" in p for p in report.problems)
 
-    def test_the_split_is_read_from_metadata_when_the_tag_is_absent(self, config: Config) -> None:
-        """``tags`` is the field Laya reads; ``metadata`` is our own provenance.
-
-        Either may carry the split, so the validator accepts both — but a row
-        carrying neither is an error, because nothing then says whether it was
-        ever held out.
-        """
+    def test_metadata_does_not_replace_the_split_tag(self, config: Config) -> None:
         rows = good_rows(config, 1)
         rows[0]["tags"] = ["task:relevance"]
-        assert validate_rows(config, rows, "relevance").ok
+        rows[0]["metadata"] = {"split": "train"}
+        report = validate_rows(config, rows, "relevance")
+        assert not report.ok
+        assert any("unexpected Laya row field" in problem for problem in report.problems)
+        assert any("no split tag" in problem for problem in report.problems)
+
+    def test_unexpected_fields_are_rejected(self, config: Config) -> None:
+        rows = good_rows(config, 1)
+        rows[0]["metadata"] = {"example_id": "sensitive-provenance"}
+        report = validate_rows(config, rows, "relevance")
+        assert any("unexpected Laya row field" in problem for problem in report.problems)
 
     def test_an_invalid_split_name_is_reported(self, config: Config) -> None:
         rows = good_rows(config, 1)
         rows[0]["tags"] = [t for t in rows[0]["tags"] if not t.startswith("split:")]
         rows[0]["tags"].append("split:holdout")
-        rows[0].pop("metadata", None)
         report = validate_rows(config, rows, "relevance")
         assert any("not one of" in p for p in report.problems)
 

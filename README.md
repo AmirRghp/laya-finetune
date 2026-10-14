@@ -95,9 +95,10 @@ Steps 1–12 cost **nothing but local CPU**. GPU time only appears at step 14.
 
 Two properties that matter when you interrupt:
 
-- **Every stage resumes.** Model responses are content-addressed in
-  `outputs/cache/ollama/`, so re-running a stage re-uses what it already paid for.
-  A `negatives` run killed at 60% continues from 60%, it does not restart.
+- **Model responses resume from the content-addressed cache.** Re-running a stage
+  re-uses matching requests from `outputs/cache/ollama/`. Generation also checks its
+  config, chunk, prompt, and stage-version fingerprints before reusing generated rows;
+  stale or legacy rows require `generate --no-resume`.
 - **Nothing is written until a stage finishes.** Artifacts are written atomically
   (`os.replace`), so a crash never leaves a half-written dataset that the next
   run would trust.
@@ -405,6 +406,8 @@ interleaved round-robin, then puts each through four gates:
 
 Absence from the source document is never sufficient on its own (AGENTS.md 6.1).
 Everything rejected is written out with its reason.
+If `negatives.verify_with_teacher` is false, the stage skips mining and emits no negative
+training rows.
 
 ```bash
 python -c "
@@ -846,8 +849,9 @@ Or in one pass:
 bash scripts/run_pipeline.sh
 ```
 
-`generate` resumes: re-running it does not re-bill the model for questions it already
-has. To force a regeneration, pass `--no-resume`.
+`generate` reuses existing rows only when the generation config, chunk contents, prompt,
+and stage version match the manifest. If any differ, rerun with `--no-resume` to generate
+fresh rows explicitly.
 
 Nothing before the training commands loads Laya weights or touches a GPU.
 
@@ -1087,17 +1091,20 @@ validation, CLI parsing, and artifact-safety guards.
 outputs/
 ├── scan/          documents.jsonl, scan.json, manifest.json
 ├── chunks/        documents.jsonl, chunks.jsonl, process.json, manifest.json
-├── generated/     relevance.jsonl, relevance.report.json
-├── split/         positives.jsonl, split.json, dropped.json
-├── negatives/     negatives.jsonl, negatives.report.json
-├── labels/        labeled.jsonl, labels.json
-├── review/        review.csv
+├── generated/     relevance.jsonl, relevance.report.json, manifest.json
+├── split/         positives.jsonl, split.json, dropped.json, manifest.json
+├── negatives/     negatives.jsonl, negatives.report.json, manifest.json
+├── labels/        labeled.jsonl, labels.json, manifest.json
+├── review/        review.csv, manifest.json
+├── sufficiency/   sufficiency.report.json, manifest.json
+├── routing/       routing.report.json, manifest.json
 ├── dataset/
 │   ├── relevance/ train.jsonl, validation.jsonl, test.jsonl, all.jsonl,
 │   │              questions.json, manifest.json
 │   ├── sufficiency/ ...
 │   ├── routing/     ...
-│   ├── validation.json, stats.json, stats.md
+│   ├── validation.json, validation.manifest.json
+│   ├── stats.json, stats.md, stats.manifest.json
 ├── cache/ollama/  content-addressed model responses (safe to delete)
 └── checkpoints/   smoke/, relevance/   (git-ignored)
 ```
@@ -1132,9 +1139,9 @@ committed, and generated datasets may embed derived document text.
 
 1. **Execution provenance.** Earlier documentation records a 461-test run and
    dataset-stage runs. The operator recalls running the pipeline, and local dataset
-   artifacts are present. There is no saved test log or complete per-stage manifest to
-   attribute every result or confirm it against the current tree. See `docs/TESTING.md`
-   for how to record future results.
+   artifacts are present. The saved artifacts predate per-stage manifests, so they do not
+   provide complete attribution. Current stage code writes manifests on new runs. See
+   `docs/TESTING.md` for how to record verification against the current tree.
 
    **Training and model evaluation:** no checkpoint or evaluation report was found in the
    inspected `outputs/` listing. Main fine-tuning and real checkpoint evaluation have not

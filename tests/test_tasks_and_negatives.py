@@ -19,8 +19,9 @@ from laya_pipeline.dataset.records import (
     make_example_id,
     strongest_label_source,
 )
-from laya_pipeline.errors import NegativeSamplingError
+from laya_pipeline.errors import NegativeSamplingError, PipelineError
 from laya_pipeline.ids import normalize_text, stable_id
+from laya_pipeline.io import write_jsonl
 from laya_pipeline.labeling import (
     apply_corrections,
     build_review_queue,
@@ -117,12 +118,25 @@ def positive(chunk: Chunk, query: str = "چه مقداری تعیین شده ا�
 # Task A: relevance
 # --------------------------------------------------------------------------- #
 class TestRelevanceGeneration:
+    def test_a_generated_key_point_absent_from_the_chunk_is_rejected(
+        self, config: Config
+    ) -> None:
+        transport = FakeTransport(
+            [questions_response(("پرسش معتبر؟", "direct", "مهلت ۹۰ روز است"))]
+        )
+        report = _generator(config, transport).generate(
+            make_chunks(1), make_context(config, transport)
+        )
+        assert report.examples == []
+        assert report.stats["questions_rejected_no_key_points"] == 1
+        assert len(transport.calls) == 1
+
     def test_questions_and_key_points_are_captured(self, config: Config) -> None:
         # One response carries both questions; the two evidence checks follow.
         transport = FakeTransport(
             [
                 questions_response(
-                    ("چه مقداری تعیین شده است؟", "direct", "مقدار ۵ واحد"),
+                    ("چه مقداری تعیین شده است؟", "direct", "مقدار 0 واحد"),
                     ("چند روز فرصت هست؟", "paraphrase", "دو روز"),
                 ),
                 evidence_response("yes", 0.95),
@@ -133,15 +147,15 @@ class TestRelevanceGeneration:
         report = generator.generate(make_chunks(1), make_context(config, transport))
         assert len(report.examples) == 2
         assert report.examples[0].task == "relevance"
-        assert report.examples[0].key_points[0].text == "مقدار ۵ واحد"
+        assert report.examples[0].key_points[0].text == "مقدار 0 واحد"
         assert [e.query_type for e in report.examples] == ["direct", "paraphrase"]
 
     def test_an_unanswerable_question_is_discarded(self, config: Config) -> None:
         transport = FakeTransport(
             [
                 questions_response(
-                    ("پرسش اول؟", "direct", "نکتهٔ اول"),
-                    ("پرسش دوم؟", "direct", "نکتهٔ دوم"),
+                    ("پرسش اول؟", "direct", "موضوع شمارهٔ 0"),
+                    ("پرسش دوم؟", "direct", "پاسخ فرصت دارد"),
                 ),
                 evidence_response("no", 0.9),
                 evidence_response("yes", 0.9),
@@ -155,7 +169,7 @@ class TestRelevanceGeneration:
     def test_an_uncertain_verdict_is_a_discard_not_a_label(self, config: Config) -> None:
         transport = FakeTransport(
             [
-                questions_response(("پرسش اول؟", "direct", "نکتهٔ اول")),
+                questions_response(("پرسش اول؟", "direct", "موضوع شمارهٔ 0")),
                 evidence_response(UNCERTAIN, 0.5),
             ]
         )
@@ -265,6 +279,18 @@ class TestNegativeSampling:
         assert all(e.label == "irrelevant" for e in report.examples)
         assert all(e.role == "negative" for e in report.examples)
         assert all(e.strategy in ("random", "lexical", "retrieval") for e in report.examples)
+
+    def test_disabling_teacher_verification_emits_no_negatives(self, config: Config) -> None:
+        config.negatives.verify_with_teacher = False
+        chunks = make_chunks(4)
+        pool = {c.chunk_id: c for c in chunks}
+        transport = FakeTransport([])
+        report = self._sampler(config, transport).mine(
+            [positive(chunks[0])], pool, make_context(config, transport)
+        )
+        assert report.examples == []
+        assert report.stats["disabled_teacher_verification"] == 1
+        assert not transport.calls
 
     def test_a_candidate_the_teacher_says_answers_is_rejected(self, config: Config) -> None:
         chunks = make_chunks(4)
@@ -474,11 +500,11 @@ class TestHelpers:
         assert clean_question("«پرسش خوب؟»", min_chars=5, max_chars=100) == "پرسش خوب؟"
 
     def test_grounding_is_checked_against_the_source(self) -> None:
-        points = grounded_key_points(["نکتهٔ یک"], ["عبارتی که نیست"], limit=4)
-        assert points and points[0].span == ""
+        points = grounded_key_points(["عبارتی که نیست"], "متن واقعی منبع", limit=4)
+        assert points == []
 
     def test_a_verified_span_is_kept(self) -> None:
-        points = grounded_key_points(["نکتهٔ یک"], ["نکتهٔ یک"], limit=4)
+        points = grounded_key_points(["نکتهٔ یک"], "منبع شامل نکتهٔ یک است", limit=4)
         assert points[0].span == "نکتهٔ یک"
 
     def test_example_ids_are_deterministic(self) -> None:
@@ -515,3 +541,70 @@ def _client(config: Config, transport: FakeTransport) -> OllamaClient:
 
 def _generator(config: Config, transport: FakeTransport) -> QuestionGenerator:
     return QuestionGenerator(config, PromptLibrary(config.prompt_dir), _client(config, transport))
+
+
+def test_generate_refuses_resume_when_prompt_changed(
+    config: Config, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from laya_pipeline import stages
+
+    chunks = make_chunks(1)
+    chunk_dir = config.stage_dir("chunks")
+    chunk_dir.mkdir(parents=True)
+    write_jsonl(chunk_dir / "chunks.jsonl", [chunk.to_dict() for chunk in chunks])
+    prompt_dir = tmp_path / "prompts"
+    prompt_dir.mkdir()
+    source_prompt = Path(config.prompt_dir) / "questions.fa.md"
+    prompt_path = prompt_dir / source_prompt.name
+    prompt_path.write_text(source_prompt.read_text(encoding="utf-8"), encoding="utf-8")
+    config.paths.prompt_dir = str(prompt_dir)
+    config.generation.verify_positives = False
+    transport = FakeTransport(
+        [questions_response(("پرسش چیست؟", "direct", "موضوع شمارهٔ 0"))]
+    )
+    monkeypatch.setattr(
+        stages, "make_client", lambda *_args, **_kwargs: _client(config, transport)
+    )
+
+    stages.stage_generate(config)
+    prompt_path.write_text(
+        prompt_path.read_text(encoding="utf-8") + "\nتغییر پرامپت\n", encoding="utf-8"
+    )
+    with pytest.raises(PipelineError, match="prompt changed"):
+        stages.stage_generate(config)
+
+
+def test_split_does_not_publish_positives_when_leakage_is_found(
+    config: Config, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from laya_pipeline import stages
+    from laya_pipeline.dataset.split import SplitReport
+    from laya_pipeline.errors import LeakageError
+
+    chunk = make_chunks(1)[0]
+    chunk_dir = config.stage_dir("chunks")
+    chunk_dir.mkdir(parents=True)
+    write_jsonl(chunk_dir / "chunks.jsonl", [chunk.to_dict()])
+    generated_dir = config.stage_dir("generated")
+    generated_dir.mkdir(parents=True)
+    generated = GeneratedExample(
+        example_id="",
+        task="relevance",
+        query="این پرسش تکراری است؟",
+        query_type="direct",
+        source_chunk_id=chunk.chunk_id,
+        source_id=chunk.source_id,
+        relpath=chunk.relpath,
+        key_points=[KeyPoint("موضوع شمارهٔ 0", "موضوع شمارهٔ 0", 0)],
+    )
+    write_jsonl(generated_dir / "relevance.jsonl", [generated.to_dict()])
+    monkeypatch.setattr(stages, "load_chunks", lambda *_args: [chunk])
+    monkeypatch.setattr(
+        stages,
+        "assign_splits",
+        lambda *_args: SplitReport(leakage=[{"kind": "duplicate_query"}]),
+    )
+
+    with pytest.raises(LeakageError, match="no positives were published"):
+        stages.stage_split(config)
+    assert not (config.stage_dir("split") / "positives.jsonl").exists()

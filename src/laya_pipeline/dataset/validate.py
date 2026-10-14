@@ -40,6 +40,7 @@ MAX_OPTIONS_ALLOWED = 8
 LOGGER = get_logger("dataset.validate")
 
 _REQUIRED_ROW_FIELDS = ("state", "questions", "expected")
+_ALLOWED_ROW_FIELDS = frozenset((*_REQUIRED_ROW_FIELDS, "tags", "language"))
 
 
 @dataclass
@@ -118,6 +119,13 @@ def validate_rows(
 
     for index, row in enumerate(rows, start=1):
         where = f"row {index}"
+
+        unexpected = set(row) - _ALLOWED_ROW_FIELDS
+        if unexpected:
+            report.problem(
+                f"{where}: unexpected Laya row field(s) {sorted(unexpected)}; allowed "
+                f"fields are {sorted(_ALLOWED_ROW_FIELDS)}"
+            )
 
         for field_name in _REQUIRED_ROW_FIELDS:
             if field_name not in row:
@@ -308,11 +316,6 @@ def _split_of(row: Mapping[str, Any]) -> Optional[str]:
         for tag in tags:
             if isinstance(tag, str) and tag.startswith("split:"):
                 return tag.split(":", 1)[1]
-    metadata = row.get("metadata")
-    if isinstance(metadata, Mapping):
-        split = metadata.get("split")
-        if isinstance(split, str):
-            return split
     return None
 
 

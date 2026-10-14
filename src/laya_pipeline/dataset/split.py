@@ -170,11 +170,11 @@ def assign_splits(
 
     order = sorted(weights)
     generator.shuffle(order)
+    tie_break = {family: index for index, family in enumerate(order)}
     assignment: Dict[str, str] = {}
     filled = {name: 0.0 for name in SPLITS}
-    # Largest documents first, so a single family cannot be stranded by a later
-    # greedy choice; ties broken by family id for determinism.
-    for family in sorted(order, key=lambda f: (-weights[f], f)):
+    # Largest documents first; the seeded order breaks equal-weight ties.
+    for family in sorted(order, key=lambda f: (-weights[f], tie_break[f])):
         # Pick the split furthest below its target. The split order breaks ties.
         best = max(SPLITS, key=lambda name: (targets[name] - filled[name], -SPLITS.index(name)))
         assignment[family] = best

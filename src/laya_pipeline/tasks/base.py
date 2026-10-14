@@ -302,28 +302,19 @@ def clean_question(text: str, *, min_chars: int, max_chars: int) -> Optional[str
 
 
 def grounded_key_points(
-    texts: Sequence[str], spans: Sequence[str], limit: int
+    texts: Sequence[str], source_text: str, limit: int
 ) -> List[KeyPoint]:
-    """Build key points, dropping any whose span is not present in the source.
+    """Keep only key points that occur verbatim in their source chunk.
 
-    Grounding is checked, not asserted: a point whose supporting span cannot be
-    found in the chunk is discarded rather than stored with a claim the corpus
-    does not support (AGENTS.md 6.4).
+    The stored span is the matched source text, never model output presented as
+    evidence (AGENTS.md 6.4).
     """
-    from ..ids import fold_for_matching
-
-    haystack = fold_for_matching(" ".join(texts))
     points: List[KeyPoint] = []
-    for text, span in zip(texts, spans):
-        if not text.strip():
+    for text in texts:
+        candidate = text.strip()
+        if not candidate or candidate not in source_text:
             continue
-        folded_span = fold_for_matching(span)
-        if folded_span and folded_span not in haystack:
-            # No verbatim anchor: keep the point but record that grounding was
-            # not verifiable, so a reviewer can see it.
-            points.append(KeyPoint(text=text.strip(), span="", index=len(points)))
-            continue
-        points.append(KeyPoint(text=text.strip(), span=span.strip(), index=len(points)))
+        points.append(KeyPoint(text=candidate, span=candidate, index=len(points)))
         if len(points) >= limit:
             break
     return points

@@ -124,6 +124,13 @@ class NegativeSampler:
                 "the chunk pool is empty; negatives cannot be mined from nothing. "
                 "This usually means mining ran before chunking."
             )
+        if not settings.verify_with_teacher:
+            LOGGER.warning(
+                "teacher verification disabled; negative mining is skipped",
+                extra={"fields": {"positives": len(positives)}},
+            )
+            report.bump("disabled_teacher_verification", len(positives))
+            return report
 
         chunks = list(pool.values())
         bm25 = BM25Index([c.chunk_id for c in chunks], [c.body for c in chunks])
@@ -319,14 +326,6 @@ class NegativeSampler:
         report: MiningReport,
     ) -> List[Candidate]:
         """Gate 4: the teacher must say the candidate does not answer the query."""
-        if not self.config.negatives.verify_with_teacher:
-            LOGGER.warning(
-                "teacher verification disabled; negatives will be unverified",
-                extra={"fields": {"example_id": positive.example_id}},
-            )
-            report.bump("teacher_check_skipped", len(candidates))
-            return list(candidates)
-
         accepted: List[Candidate] = []
         for candidate in candidates:
             text = pool[candidate.chunk_id].text

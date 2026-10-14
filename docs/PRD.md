@@ -91,10 +91,10 @@ Each requirement is testable and maps to at least one named test (AGENTS 7.5).
 
 | # | Requirement | Verified by |
 |---|---|---|
-| FR-2.1 | Persian questions generated per chunk, each with verbatim-grounded key points | `test_tasks_and_negatives.py::TestRelevanceGeneration` |
+| FR-2.1 | Persian questions generated per chunk, each with verbatim-grounded key points | `test_tasks_and_negatives.py::TestRelevanceGeneration::test_a_generated_key_point_absent_from_the_chunk_is_rejected`, `test_grounding_is_checked_against_the_source` |
 | FR-2.2 | Positives rest on a teacher *finding*, not a plausible generation | `verify_positives: true` + evidence gate |
 | FR-2.3 | Hard negatives from three strategies, interleaved round-robin | `test_tasks_and_negatives.py::TestNegativeSampling` |
-| FR-2.4 | **A non-source chunk is never auto-labelled irrelevant** | four gates, AGENTS 6.1 |
+| FR-2.4 | **A non-source chunk is never auto-labelled irrelevant** | four gates; `test_disabling_teacher_verification_emits_no_negatives` |
 | FR-2.5 | **Ambiguity is a discard, never a coin flip** | `test_an_uncertain_verdict_is_a_discard_not_a_label` |
 | FR-2.6 | Sufficiency judged against key-point coverage, never similarity | `tasks/sufficiency.py` |
 | FR-2.7 | Routing labels derive from query form only — teacher never sees source identity | `tasks/routing.py`, AGENTS 6.6 |
@@ -107,13 +107,13 @@ Each requirement is testable and maps to at least one named test (AGENTS 7.5).
 | FR-3.2 | Negatives mined inside each split's *own* chunk pool | `stage_negatives` `_pool_for_split` |
 | FR-3.3 | Group splitting by document and by near-duplicate family | `test_dataset.py::TestLeakage` |
 | FR-3.4 | Four leakage classes detected: identical decision, source split, duplicate query, paraphrased query | `test_dataset.py` |
-| FR-3.5 | Leakage report must be empty; non-empty blocks acceptance of the split | `test_leakage_prevents_dataset_build` (required, not yet implemented); AGENTS 6.8 |
+| FR-3.5 | Leakage report must be empty; non-empty blocks publication of split positives and downstream dataset stages | `test_tasks_and_negatives.py::test_split_does_not_publish_positives_when_leakage_is_found`, `test_cli_and_io.py::test_leaky_split_blocks_dataset_build`; AGENTS 6.8 |
 
 ### FR-4 Dataset emission
 
 | # | Requirement | Verified by |
 |---|---|---|
-| FR-4.1 | Rows are exactly `{state, questions, expected}` plus optional `tags`, `language` | `test_build_row_has_only_laya_contract_fields` (required, not yet implemented) |
+| FR-4.1 | Rows are exactly `{state, questions, expected}` plus optional `tags`, `language` | `test_dataset.py::TestRows::test_a_positive_becomes_a_valid_row`, `test_unexpected_fields_are_rejected` |
 | FR-4.2 | **One `(query, chunk)` pair per row** | AGENTS 3.5 |
 | FR-4.3 | Question definitions have **one** source of truth | `configs/default.yaml::laya.questions` |
 | FR-4.4 | `state` rendered from a config-driven Persian template; fingerprinted | `test_dataset.py::TestValidation` |
@@ -126,17 +126,17 @@ Each requirement is testable and maps to at least one named test (AGENTS 7.5).
 | FR-5.1 | Training through `laya.train.finetune` / `dry_run` in Python, not the CLI | AGENTS 3.3 |
 | FR-5.2 | Optimizer-update budget printed **before** any GPU spend | `training.py`, AGENTS 3.13 |
 | FR-5.3 | `train` refuses to start without `--yes` | `training.py` |
-| FR-5.4 | Real training refuses to start unless non-empty held-out `eval_data` is passed | `test_train_requires_nonempty_validation_data` (required, not yet implemented); AGENTS 3.9 |
+| FR-5.4 | Real training refuses to start unless non-empty held-out `eval_data` is passed | `test_cli_and_io.py::test_real_training_rejects_missing_or_empty_validation`; AGENTS 3.9 |
 | FR-5.5 | Label-encoding positive control available as the chance-level diagnostic | AGENTS 3.14 |
 
 ### FR-6 Reproducibility
 
 | # | Requirement | Verified by |
 |---|---|---|
-| FR-6.1 | One seed threaded through every stage; no module-level RNG | AGENTS 4.1 |
-| FR-6.2 | Re-running a stage on unchanged inputs is byte-identical | AGENTS 4.2 |
+| FR-6.1 | One seed threaded through every stage; equal-weight split families use seeded tie order | `test_dataset.py::TestLeakage::test_seed_changes_equal_weight_family_ties`; AGENTS 4.1 |
+| FR-6.2 | Re-running a stage on unchanged inputs is byte-identical; resume refuses stale prompt/config/chunk inputs | `test_tasks_and_negatives.py::test_generate_refuses_resume_when_prompt_changed`; AGENTS 4.2 |
 | FR-6.3 | Every artifact write is atomic (`os.replace`) | `io.py`, `test_cli_and_io.py` |
-| FR-6.4 | Every artifact directory carries `manifest.json` with input hashes, config hash, seed, counts, stage version | `io.write_manifest` |
+| FR-6.4 | Every artifact directory carries `manifest.json` with input hashes, config hash, seed, counts, stage version | `test_cli_and_io.py::TestAtomicWrites::test_manifest_records_its_inputs`, `test_validate_and_stats_write_stage_manifests`; stage manifests in `stages.py` |
 | FR-6.5 | Caches content-addressed; a hit equals a fresh call | `llm/cache.py` |
 
 ### FR-7 Safety and diagnosis
@@ -147,6 +147,7 @@ Each requirement is testable and maps to at least one named test (AGENTS 7.5).
 | FR-7.2 | `preflight` compares configured models against Ollama in one second | `test_diagnostics.py` |
 | FR-7.3 | Structured logging with named fields; no bare `print()` in library code | AGENTS 5.2 |
 | FR-7.4 | Typed exceptions naming the offending path, id or value | `errors.py` (20 classes) |
+| FR-7.5 | Embedding retrieval uses the same resolved embedding function for indexing and query ranking | `test_retrieval_and_report.py::test_retrieval_keeps_the_default_embedding_function_for_queries` |
 
 ## 6. Non-functional requirements
 
@@ -167,11 +168,11 @@ Specific, testable, and explicit about the source and confidence of each status.
 
 - [x] Dataset artifacts exist for relevance, sufficiency, and routing
       *(saved local snapshot: `outputs/dataset/stats.json`; operator attributes the prior
-      run to their own execution, but individual stage manifests are missing)*
+      run to their own execution; the snapshot predates the new per-stage manifests)*
 - [ ] Key-point source spans are verified against chunk text
-      *(not established by the current code review; see [`review.md`](../review.md))*
+      *(implementation and regression test added; pytest execution is unverified in this environment)*
 - [ ] Split leakage is empty and blocks dataset acceptance when non-empty
-      *(requires regression coverage and code-path verification)*
+      *(fail-closed split/build/train/evaluate gates and regression tests added; pytest execution is unverified)*
 
 ### Engineering
 
@@ -291,16 +292,15 @@ AGENTS.md        Binding rules for every agent and human contributor
 | Q-3 | What is the real `EvalReport.cases` shape? | Macro-F1, confusion matrix | First `evaluate classify` |
 | Q-4 | Is a stronger teacher (7B+) worth the wall-clock? | Dataset size | Operator |
 | Q-5 | Should `negatives.ratio` rise above 1.0 for per-negative efficiency? | Label balance | After first evaluation |
-| Q-6 | When will the P1/P2 code-review findings and their required regression tests be addressed? | Reliable held-out data and reproducibility | Operator |
 
 ---
 
 ## Appendix — saved local artifact snapshot
 
 The current local `outputs/dataset/stats.json` contains these counts. The operator reports
-that the dataset run was likely theirs. Missing manifests for several stages mean these
-files do not provide complete run attribution or provenance. Counts are saved output
-records, not model-quality results.
+that the dataset run was likely theirs. The saved snapshot predates the new per-stage
+manifest code, so it still does not provide complete run attribution or provenance. Counts
+are saved output records, not model-quality results.
 
 | Metric | Value |
 |---|---|
