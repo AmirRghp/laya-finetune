@@ -124,10 +124,12 @@ Each requirement is testable and maps to at least one named test (AGENTS 7.5).
 | # | Requirement | Verified by |
 |---|---|---|
 | FR-5.1 | Training through `laya.train.finetune` / `dry_run` in Python, not the CLI | AGENTS 3.3 |
-| FR-5.2 | Optimizer-update budget printed **before** any GPU spend | `training.py`, AGENTS 3.13 |
+| FR-5.2 | Optimizer-update budget printed **before** any GPU spend and uses the tokenizer-valid item count | `test_cli_and_io.py::TestParser::test_dry_run_prints_plan_after_counting_items`, `test_cli_and_io.py::TestParser::test_real_run_counts_items_before_printing_budget`; AGENTS 3.13 |
 | FR-5.3 | `train` refuses to start without `--yes` | `training.py` |
 | FR-5.4 | Real training refuses to start unless non-empty held-out `eval_data` is passed | `test_cli_and_io.py::test_real_training_rejects_missing_or_empty_validation`; AGENTS 3.9 |
 | FR-5.5 | Label-encoding positive control available as the chance-level diagnostic | AGENTS 3.14 |
+| FR-5.6 | `--profile` partially overlays the resolved config for training; later `--set` wins | `test_cli_and_io.py::TestParser::test_train_profile_is_applied_and_set_wins` |
+| FR-5.7 | Training dry-run calls the official `laya.train.dry_run`, updates its item estimate, and never calls finetune | `test_training.py::test_run_dry_run_calls_dry_run_and_updates_plan` |
 
 ### FR-6 Reproducibility
 
@@ -148,6 +150,12 @@ Each requirement is testable and maps to at least one named test (AGENTS 7.5).
 | FR-7.3 | Structured logging with named fields; no bare `print()` in library code | AGENTS 5.2 |
 | FR-7.4 | Typed exceptions naming the offending path, id or value | `errors.py` (20 classes) |
 | FR-7.5 | Embedding retrieval uses the same resolved embedding function for indexing and query ranking | `test_retrieval_and_report.py::test_retrieval_keeps_the_default_embedding_function_for_queries` |
+
+### FR-8 Tokenizer resolution
+
+| # | Requirement | Verified by |
+|---|---|---|
+| FR-8.1 | A remote checkpoint tokenizer is resolved from its `tokenizer/` subfolder when present, with repository-root fallback | `test_tokenizer.py::test_hub_tokenizer_loads_from_tokenizer_subfolder`, `test_hub_tokenizer_falls_back_to_repository_root` |
 
 ## 6. Non-functional requirements
 

@@ -17,7 +17,7 @@ ordinary changes quick and keeps expensive model work out of the agent test loop
 
 | Layer | Scope | Typical files |
 |---|---|---|
-| Unit | One function or module, including malformed and boundary inputs | `test_ids.py`, `test_config.py`, `test_markdown.py`, `test_chunking.py` |
+| Unit | One function or module, including malformed and boundary inputs | `test_ids.py`, `test_config.py`, `test_markdown.py`, `test_chunking.py`, `test_tokenizer.py`, `test_training.py` |
 | Contract | Dataset rows, split safety, deterministic artifacts, corpus write protection | `test_dataset.py`, `test_cli_and_io.py`, `test_corpus_discovery.py` |
 | Mocked integration | Stage and client interactions through synthetic fixtures and `FakeTransport` | `test_tasks_and_negatives.py`, `test_llm.py`, `test_diagnostics.py` |
 | Model/training | No automated test loads weights or performs fine-tuning | Operator-only workflow, outside pytest |
@@ -94,6 +94,12 @@ Give explicit tests to high-risk contracts:
 - Atomic writes, output path protection, cache identity, and manifest contents.
 - `test_cli_and_io.py::test_real_training_rejects_missing_or_empty_validation` covers the
   held-out validation gate for real training.
+- `test_training.py::test_run_dry_run_calls_dry_run_and_updates_plan` covers the mocked
+  Laya dry-run bridge without loading weights; `test_cli_and_io.py::TestParser::test_train_profile_is_applied_and_set_wins`
+  covers profile overlay and CLI override precedence.
+- `test_cli_and_io.py::TestParser::test_dry_run_prints_plan_after_counting_items` checks
+  that the printed dry-run budget uses the mocked count; `test_real_run_counts_items_before_printing_budget`
+  checks that the mocked tokenizer-valid count is printed before the real-run bridge.
 - Retrieval evaluation with both lexical and embedding backends, using fake embeddings;
   `test_retrieval_and_report.py::test_retrieval_keeps_the_default_embedding_function_for_queries`
   covers the default embedding path.

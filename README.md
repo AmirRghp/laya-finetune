@@ -695,8 +695,13 @@ from there, so the file is not decorative:
 cp .env.example .env
 ```
 
-Precedence: **the real environment wins over `.env`**. That is deliberate — a
-one-off override must not require editing a file:
+Precedence: dataclass defaults → `configs/default.yaml` → `.env` → real environment →
+`train --profile` → `--set`. Training profiles overlay only the fields they specify;
+omitted values inherit the resolved config, and `--set` wins if both specify a field.
+Profiles accept a non-empty `training` mapping and optional `project.seed`; other
+sections and project keys are rejected.
+**The real environment wins over `.env`**. That is deliberate — a one-off override
+must not require editing a file:
 
 ```bash
 LAYA_OLLAMA_TEACHER_MODEL=qwen2.5:14b laya-pipeline label   # this run only
@@ -901,7 +906,8 @@ fields, non-empty state, question type, instructions matching the configured def
 option order and consistency, label ∈ options, duplicate states, and a split tag on every
 row. It warns when an option never appears and when a split is empty.
 
-`--with-laya` loads the real tokenizer and measures state length against `laya.max_len`.
+`--with-laya` loads the real tokenizer (from the checkpoint's `tokenizer/` subfolder
+when present) and measures state length against `laya.max_len`.
 Over-long states get truncated at training and at inference, which silently destroys the
 evidence at the end of the prompt — so this is worth running.
 
@@ -955,7 +961,9 @@ laya-pipeline train --task relevance --profile configs/full.yaml \
                    --out outputs/checkpoints/relevance --yes
 ```
 
-`train` **always prints the resolved plan and the optimizer-update budget first**, and
+`train` first counts tokenizer-valid items, then prints the resolved plan and optimizer
+budget. This step uses the tokenizer and may resolve checkpoint files, but does not train
+or load model weights. The command
 **refuses to start without `--yes`**:
 
 ```
@@ -1128,6 +1136,7 @@ committed, and generated datasets may embed derived document text.
 | `fewer X candidates than negatives.ratio` | the corpus is small | lower `negatives.ratio`; this is a corpus property, not a bug |
 | Split warnings about empty splits or few families | fewer documents than splits need | add documents, or accept a wider error bar and say so |
 | `ValidationError ... exceeds laya.max_len` | Persian tokenises densely | lower `chunking.max_tokens`, or raise `laya.max_len` if the checkpoint allows |
+| `could not load a tokenizer ... sentencepiece or tiktoken` | tokenizer files were not found in the configured model path | the loader checks the model repo's `tokenizer/` subfolder and then its root; rerun `validate --with-laya` with this version |
 | RTX 5060 Ti reports `cuda is not available` | torch build lacks `sm_120` | install a newer torch. Not applicable here: `check_env.sh` measured `cuda available: True` on torch 2.14.1+cu130 |
 | Training OOM on a small card | `laya.max_len: 1024` drives activation memory | lower `laya.max_len` first, then `micro_batch`, then enable `gradient_checkpointing`. See the GPU note in section 4 |
 | Accuracy high but the model always answers `irrelevant` | class imbalance | read `stats.md`; rebalance `negatives.ratio` |
@@ -1225,3 +1234,12 @@ money goes. Nothing touches a GPU before step 14.
 Times scale roughly with `corpus documents × questions_per_chunk`. To cut the bill
 without changing the dataset's shape, the cheapest knob is
 `negatives.candidates_per_positive` (step 5 is 12 teacher calls per negative kept).
+
+### Local verification limitations (2026-10-15)
+
+The agent ran `.venv/Scripts/python.exe -m pytest -q --tb=short tests/test_tokenizer.py tests/test_training.py tests/test_cli_and_io.py tests/test_config.py`
+on Windows. Four tests failed: `TestEndToEndWithoutOllama::test_process_records_that_counts_were_estimated`
+found a cached tokenizer rather than the expected estimated counter, and the three
+`TestPaths` cases in `test_config.py` compared drive-resolved paths with Unix-style
+paths. These checks are not passing in this environment. No real training or checkpoint
+evaluation was performed; model behavior remains unverified.

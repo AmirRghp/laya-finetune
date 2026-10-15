@@ -51,6 +51,76 @@ class TestParser:
         assert args.profile == "configs/smoke.yaml"
         assert args.dry_run is True
 
+    def test_train_profile_is_applied_and_set_wins(self, monkeypatch, repo_root) -> None:
+        from laya_pipeline import cli
+
+        captured = []
+        monkeypatch.setattr(cli, "_run", lambda args: captured.append(args.config_obj) or {})
+        common = ["--config", str(repo_root / "configs" / "default.yaml")]
+        train_args = [
+            "train", "--profile", str(repo_root / "configs" / "dry_run.yaml"),
+            "--dry-run",
+        ]
+
+        assert main([*common, *train_args]) == 0
+        assert captured[-1].training.epochs == 1
+
+        assert main([*common, "--set", "training.epochs=2", *train_args]) == 0
+        assert captured[-1].training.epochs == 2
+
+    def test_dry_run_prints_plan_after_counting_items(self, config, monkeypatch, capsys) -> None:
+        from laya_pipeline import training
+
+        directory = config.stage_dir("dataset") / "relevance"
+        directory.mkdir(parents=True)
+        write_text(directory / "train.jsonl", "{}\n")
+        write_text(directory / "validation.jsonl", "{}\n")
+
+        def fake_dry_run(_config, plan):
+            plan.estimated_train_items = 17
+            return {"train_items": 17}
+
+        monkeypatch.setattr(training, "run_dry_run", fake_dry_run)
+        args = build_parser().parse_args(["train", "--task", "relevance", "--dry-run"])
+        args.config_obj = config
+
+        result = _run_train(args)
+
+        assert result["mode"] == "dry-run"
+        output = capsys.readouterr().out
+        assert "estimated train items: 17" in output
+        assert "optimizer updates    : 8" in output
+
+    def test_real_run_counts_items_before_printing_budget(
+        self, config, monkeypatch, capsys
+    ) -> None:
+        from laya_pipeline import stages, training
+
+        directory = config.stage_dir("dataset") / "relevance"
+        directory.mkdir(parents=True)
+        write_text(directory / "train.jsonl", '{"state":"train"}\n')
+        write_text(directory / "validation.jsonl", '{"state":"validation"}\n')
+
+        monkeypatch.setattr(stages, "_load_split_report_obj", lambda _config: {})
+        monkeypatch.setattr(training, "count_training_items", lambda _config, _path: 65)
+
+        def fake_finetune(_config, plan):
+            assert plan.estimated_train_items == 65
+            return {"train_report": {}}
+
+        monkeypatch.setattr(training, "run_finetune", fake_finetune)
+        args = build_parser().parse_args(
+            ["train", "--task", "relevance", "--yes", "--out", "synthetic-output"]
+        )
+        args.config_obj = config
+
+        result = _run_train(args)
+
+        assert result["mode"] == "finetune"
+        output = capsys.readouterr().out
+        assert "estimated train items: 65" in output
+        assert "optimizer updates    : 16" in output
+
     def test_train_refuses_without_yes_by_default(self) -> None:
         assert build_parser().parse_args(["train"]).yes is False
 

@@ -219,7 +219,7 @@ def run_dry_run(config: Config, plan: TrainingPlan) -> Dict[str, Any]:
     Uses the official ``laya.train.dry_run``, so the numbers here are the same
     ones a real run would compute.
     """
-    TrainConfig, _dry_run, dry_run = require_laya()
+    TrainConfig, dry_run, _finetune = require_laya()
     train_config = TrainConfig(**plan.train_config_kwargs)
     train_config.validate()
 

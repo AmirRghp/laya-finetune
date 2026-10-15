@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import threading
 from pathlib import Path
-from typing import List, Optional, Protocol, Sequence, runtime_checkable
+from typing import Any, Dict, List, Optional, Protocol, Sequence, runtime_checkable
 
 from .config import ChunkingConfig
 from .errors import TokenizerError
@@ -130,19 +130,26 @@ def _load_huggingface_counter(
             "run this stage with an estimated counter."
         ) from exc
 
-    candidates: List[str] = []
+    candidates: List[tuple[str, Optional[str]]] = []
     local = Path(model).expanduser()
     if local.is_dir():
         nested = local / "tokenizer"
-        candidates.append(str(nested if nested.is_dir() else local))
-    candidates.append(model)
+        candidates.append((str(nested if nested.is_dir() else local), None))
+    else:
+        # Laya's Hub repositories keep tokenizer.json and tokenizer_config.json
+        # in a `tokenizer/` subfolder while model config/weights stay at the root.
+        candidates.append((model, "tokenizer"))
+        candidates.append((model, None))
 
     last_error: Optional[Exception] = None
-    for candidate in candidates:
+    for candidate, subfolder in candidates:
         try:
+            kwargs: Dict[str, Any] = {"local_files_only": not allow_download}
+            if subfolder is not None:
+                kwargs["subfolder"] = subfolder
             tokenizer = AutoTokenizer.from_pretrained(
                 candidate,
-                local_files_only=not allow_download,
+                **kwargs,
             )
         except Exception as exc:  # transformers raises many concrete types
             last_error = exc
@@ -154,7 +161,8 @@ def _load_huggingface_counter(
                 tokenizer.model_max_length = int(max_length)
             except (AttributeError, TypeError, ValueError):
                 pass
-        return HuggingFaceTokenCounter(tokenizer, source=f"huggingface:{candidate}")
+        source = f"{candidate}/{subfolder}" if subfolder is not None else candidate
+        return HuggingFaceTokenCounter(tokenizer, source=f"huggingface:{source}")
 
     raise TokenizerError(
         f"could not load a tokenizer for {model!r}: {last_error}. Set "

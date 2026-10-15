@@ -56,6 +56,7 @@ __all__ = [
     "LayaConfig",
     "TrainingConfig",
     "EvaluationConfig",
+    "load_training_profile_overrides",
     "load_config",
     "config_hash",
 ]
@@ -801,6 +802,53 @@ def validate_evaluation(section: EvaluationConfig) -> None:
 # --------------------------------------------------------------------------- #
 # Loading
 # --------------------------------------------------------------------------- #
+def load_training_profile_overrides(
+    path: str | os.PathLike[str],
+) -> Dict[str, Any]:
+    """Load only supported training-profile values as dotted config overrides."""
+    from .io import read_text
+
+    profile_path = Path(path).expanduser()
+    if not profile_path.is_file():
+        raise ConfigError(f"training profile not found: {profile_path}")
+    text = read_text(profile_path)
+    try:
+        import yaml
+
+        loaded = yaml.safe_load(text)
+    except ImportError as exc:  # pragma: no cover - dependency is declared
+        raise ConfigError("PyYAML is required to read a training profile") from exc
+    except Exception as exc:  # yaml.YAMLError
+        raise ConfigError(f"{profile_path} is not valid YAML: {exc}") from exc
+
+    if not isinstance(loaded, Mapping):
+        raise ConfigError(f"{profile_path} must contain a YAML mapping at the top level")
+    unknown_sections = sorted(set(loaded) - {"project", "training"})
+    if unknown_sections:
+        raise ConfigError(
+            f"{profile_path} has unsupported section(s): {', '.join(unknown_sections)}"
+        )
+
+    project = loaded.get("project", {})
+    if not isinstance(project, Mapping):
+        raise ConfigError(f"{profile_path} project section must be a mapping")
+    unknown_project = sorted(set(project) - {"seed"})
+    if unknown_project:
+        raise ConfigError(
+            f"{profile_path} project section has unsupported key(s): "
+            f"{', '.join(unknown_project)}"
+        )
+
+    training = loaded.get("training")
+    if not isinstance(training, Mapping) or not training:
+        raise ConfigError(f"{profile_path} must contain a non-empty training mapping")
+
+    overrides = {f"training.{key}": value for key, value in training.items()}
+    if "seed" in project:
+        overrides["project.seed"] = project["seed"]
+    return overrides
+
+
 def load_config(
     path: str | os.PathLike[str] | None = None,
     *,

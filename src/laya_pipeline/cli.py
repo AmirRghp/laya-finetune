@@ -25,7 +25,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence
 
 from . import __version__
-from .config import load_config
+from .config import load_config, load_training_profile_overrides
 from .errors import ConfigError, PipelineError
 from .ids import content_hash
 from .io import file_sha256, read_jsonl, write_manifest
@@ -425,12 +425,18 @@ def _run_train(args: argparse.Namespace) -> Any:
         profile=args.profile or "",
     )
 
+    if args.dry_run:
+        summary = training.run_dry_run(config, plan)
+    else:
+        # Count usable decision items before reporting the budget. This reads
+        # the data and tokenizer only; it does not start model training.
+        plan.estimated_train_items = training.count_training_items(config, data_path)
+
     print("=" * 72)
     print(plan.describe())
     print("=" * 72)
 
     if args.dry_run:
-        summary = training.run_dry_run(config, plan)
         return {"mode": "dry-run", "summary": summary}
 
     if not args.yes:
@@ -595,7 +601,12 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         return 2
 
     try:
-        config = load_config(args.config, overrides=_parse_overrides(args.overrides))
+        overrides: Dict[str, Any] = {}
+        profile_path = getattr(args, "profile", None)
+        if args.command == "train" and profile_path:
+            overrides.update(load_training_profile_overrides(profile_path))
+        overrides.update(_parse_overrides(args.overrides))
+        config = load_config(args.config, overrides=overrides)
     except PipelineError as exc:
         print(f"configuration error: {exc}", file=sys.stderr)
         return 2

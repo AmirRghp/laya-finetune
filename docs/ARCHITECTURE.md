@@ -214,9 +214,11 @@ choose — the most expensive kind of surprise, because the run *succeeds*.
 **more** epochs than a large one to reach a comparable update count. A run that never
 rises above the class prior is the classic symptom of too few updates.
 
-**Decision.** Every `train` invocation prints the resolved plan and the budget, then
-stops with exit 2 unless `--yes` is passed. The budget is printed **before** the model
-loads, so reading it costs nothing.
+**Decision.** Every `train` invocation counts tokenizer-valid training items before
+printing the resolved plan and budget. Dry-run uses the official Laya dry-run summary;
+the real-run path counts items before loading model weights. Counting requires tokenizer
+files and can resolve checkpoint files, so planning is not a dependency-free operation.
+A real run requires `--yes`; dry-run never calls finetune.
 
 ### ADR-011: `laya.questions` is the single source of truth
 
@@ -280,6 +282,22 @@ trusts. And a run killed at 60% must not re-bill the model for the first 60%.
 
 **Cost.** Disk. Measured: 2,635 cache entries for one `negatives` run. Worth it — that
 cache is what makes the stage resumable.
+
+### ADR-016: Training profiles are partial config overlays
+
+**Context.** A selected training profile must affect the actual run while keeping values
+that the profile omits. Operators also need explicit one-off overrides.
+
+**Decision.** Apply profile `training` fields and optional `project.seed` after environment
+resolution, then apply `--set` last. Reject unsupported profile sections and project keys;
+normal config validation checks training fields.
+
+**Alternatives.** Replacing the whole config loses inherited settings. Applying profiles
+before the environment can silently override the operator's selected profile. Applying
+profiles after `--set` defeats explicit command-line overrides. All are rejected.
+
+**Consequence.** Profiles are limited overlays, not arbitrary project configurations.
+`test_cli_and_io.py::TestParser::test_train_profile_is_applied_and_set_wins` pins precedence.
 
 ## 4. Data model
 
@@ -370,8 +388,11 @@ default.
 Precedence, lowest to highest:
 
 ```
-dataclass default  →  configs/default.yaml  →  .env  →  real environment  →  --set
+dataclass default  →  configs/default.yaml  →  .env  →  real environment  →  --profile  →  --set
 ```
+
+Training profiles are partial overlays: omitted fields keep the resolved main-config
+values. A command-line `--set` is applied last and wins over the selected profile.
 
 `.env` is read at the repo root (or one level up). A **real environment variable always
 wins**, so a one-off override never requires editing a file:
