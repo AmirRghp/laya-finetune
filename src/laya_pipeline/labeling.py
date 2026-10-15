@@ -180,12 +180,10 @@ def propose_labels(
         updated = _with_label(example, label, confidence, verdict, resolved_teacher.model)
         report.examples.append(updated)
 
-        status = _review_status(confidence, config)
-        if status is not None:
-            report.queue.append(_to_review_item(updated, status=status))
-            report.bump("queued_for_review")
-        else:
-            report.bump("accepted_automatically")
+        report.queue.append(
+            _to_review_item(updated, status=_review_status(confidence, config))
+        )
+        report.bump("queued_for_review")
 
         report.bump(f"label_{label}")
 
@@ -260,20 +258,14 @@ def _with_label(
     )
 
 
-def _review_status(confidence: float, config: Config) -> Optional[str]:
-    """Whether this proposal needs a human, and why.
-
-    ``None`` means accept: the teacher was confident enough. Inside the
-    configured uncertain band it is ``"uncertain"`` rather than ``"needs_review"``
-    so a reviewer can triage the two populations separately. Note that confidence
-    routes work to a human — it never stands in for correctness (AGENTS.md 6.11).
-    """
+def _review_status(confidence: float, config: Config) -> str:
+    """Route every teacher proposal for review without treating confidence as truth."""
     settings = config.labeling
-    if confidence >= settings.review_threshold:
-        return None
     if settings.uncertain_low <= confidence <= settings.uncertain_high:
         return "uncertain"
-    return "needs_review"
+    if confidence < settings.review_threshold:
+        return "needs_review"
+    return "needs_second_opinion"
 
 
 def _to_review_item(example: LabeledExample, *, status: str) -> ReviewItem:
@@ -312,15 +304,25 @@ def build_review_queue(
     queue: List[ReviewItem] = []
     for example in examples:
         confidence = example.confidence
-        low_confidence = confidence is not None and confidence < config.labeling.review_threshold
-        needs_second_opinion = example.role == "negative" and not example.metadata.get(
-            "reviewed"
+        pending_teacher = (
+            example.label_source == "teacher" and not example.metadata.get("reviewed")
         )
-        if low_confidence or needs_second_opinion:
+        pending_review = not example.metadata.get("reviewed")
+        low_confidence = (
+            pending_review
+            and confidence is not None
+            and confidence < config.labeling.review_threshold
+        )
+        needs_second_opinion = pending_review and example.role == "negative"
+        if pending_teacher or low_confidence or needs_second_opinion:
             queue.append(
                 _to_review_item(
                     example,
-                    status="needs_review" if low_confidence else "needs_second_opinion",
+                    status=(
+                        _review_status(confidence, config)
+                        if pending_teacher and confidence is not None
+                        else "needs_review" if low_confidence else "needs_second_opinion"
+                    ),
                 )
             )
     queue.sort(key=lambda item: (item.task, item.confidence if item.confidence is not None else -1))
@@ -365,6 +367,10 @@ def apply_corrections(
         final = str(row.get("final_label", "")).strip()
         if not final:
             continue
+        if example_id in corrections and corrections[example_id] != final:
+            raise LabelingError(
+                f"conflicting review labels for example {example_id!r}"
+            )
         corrections[example_id] = final
 
     stats = {"matched": 0, "unknown_id": 0, "changed": 0, "unchanged": 0, "invalid_label": 0}
@@ -391,18 +397,17 @@ def apply_corrections(
             )
             result.append(example)
             continue
-        if proposed == example.label:
-            stats["unchanged"] += 1
-            result.append(example)
-            continue
-
-        stats["changed"] += 1
+        changed = proposed != example.label
+        stats["changed" if changed else "unchanged"] += 1
         metadata = dict(example.metadata)
-        metadata["superseded_label"] = {
-            "label": example.label,
-            "label_source": example.label_source,
-            "confidence": example.confidence,
-        }
+        if changed:
+            metadata["superseded_label"] = {
+                "label": example.label,
+                "label_source": example.label_source,
+                "confidence": example.confidence,
+            }
+        else:
+            metadata["confirmed_label"] = proposed
         metadata["reviewed"] = True
         metadata["reviewer"] = reviewer
         notes = metadata.get("review_notes")

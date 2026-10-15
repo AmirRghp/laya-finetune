@@ -452,8 +452,9 @@ and `outputs/review/review.csv`.
 
 ### Step 7 — human review *(your time, no cost)*
 
-Open `outputs/review/review.csv` and correct the `final_label` column for rows whose
-`status` is `needs_review` or `uncertain`. Leave every other column alone, save, then:
+Open `outputs/review/review.csv` and review every row, including
+`needs_second_opinion`. Set `final_label` to the label you approve, even when it is
+unchanged. Leave every other column alone, save, then:
 
 ```bash
 python - <<'PY'
@@ -470,21 +471,18 @@ rows = read_review_csv("outputs/review/review.csv")
 options = {t: config.laya.options(t) for t in config.laya.question_ids()}
 updated, stats = apply_corrections(examples, rows, options_by_task=options, reviewer="you")
 
-write_jsonl(path, (e.to_dict() for e in updated))
+write_jsonl(path, (e.to_dict() for e in updated), config.corpus_dir)
 print(stats)
 PY
 ```
 
-Human labels always win; the automatic label is preserved under
-`metadata.superseded_label` so the original decision stays auditable. Rebuild
-afterwards, because splits are unchanged but labels are not:
+Human confirmation is recorded even when you keep the proposed label; changed proposals
+are preserved under `metadata.superseded_label`. Dataset building refuses teacher labels
+that have not been confirmed. After `tasks sufficiency` and `tasks routing`, review their
+new rows in `review.csv` and run the same apply step again before the build step.
 
-```bash
-laya-pipeline build --task all && laya-pipeline validate --task all
-```
-
-Skipping review is allowed — those labels stay as the teacher set them — but the
-rows in the queue are precisely the ones a stronger model would have got wrong.
+Confidence only routes proposals for review. A teacher label cannot enter a dataset until
+a human confirms it.
 
 ---
 
@@ -671,7 +669,7 @@ first:
 | `ollama` | endpoint, three model names, timeouts, retries, cache location |
 | `generation` | questions per chunk, key-point cap, temperature, resume |
 | `negatives` | ratio, strategies and weights, similarity window, near-duplicate threshold |
-| `labeling` | auto-accept threshold and the uncertain band |
+| `labeling` | review priority threshold and the uncertain band; confidence never accepts a label |
 | `splitting` | ratios, family similarity, query-leakage threshold |
 | `laya` | base checkpoint, token budgets, **and the question definitions** |
 | `training` | mirrors `laya.train.TrainConfig` field for field |
@@ -887,10 +885,10 @@ the teacher judges them against the key points. Routing labels the query alone.
 ## 8. Manual label review
 
 The full procedure is [Step 7 of the runbook](#step-7-human-review-your-time-no-cost).
-In short: open `outputs/review/review.csv`, correct the `final_label` column for rows
-whose `status` is `needs_review` or `uncertain`, save, apply with the snippet there, then
-`build && validate`. Human labels always win and the automatic label is preserved under
-`metadata.superseded_label`.
+Review every row in `outputs/review/review.csv`, including `needs_second_opinion`, and
+confirm the `final_label` even when you agree with the proposal. After generating
+sufficiency or routing labels, repeat the review and apply steps before `build &&
+validate`. Builds refuse unconfirmed teacher labels.
 
 ---
 

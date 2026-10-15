@@ -414,7 +414,8 @@ class TestLabeling:
             [example], config, _client(config, transport), PromptLibrary(config.prompt_dir)
         )
         assert report.examples[0].label == "irrelevant"
-        assert report.stats["accepted_automatically"] == 1
+        assert report.stats["queued_for_review"] == 1
+        assert report.queue[0].status == "needs_second_opinion"
 
     def test_low_confidence_queues_for_review(self, config: Config) -> None:
         chunks = make_chunks(1)

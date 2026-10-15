@@ -243,7 +243,7 @@ def write_dataset(
     that the question definition travels with the dataset *before* training
     starts — a dataset whose questions cannot be reproduced is not reviewable.
     """
-    target = ensure_dir(Path(directory))
+    target = ensure_dir(Path(directory), config.corpus_dir)
     corpus_dir = config.corpus_dir
     name = filename or f"{artifact.task}.jsonl"
 

@@ -167,7 +167,9 @@ assigning `relevant` injects a false positive.
 
 **Decision.** `uncertain` is a third option offered to the teacher, and an uncertain
 verdict **discards** the example. Teacher confidence is recorded and **never used as a
-proxy for label validity** (AGENTS 6.11).
+proxy for label validity** (AGENTS 6.11). Every teacher label remains a proposal until a
+human confirms it; confirming the proposed value is recorded just like changing it, and
+`build` refuses unconfirmed teacher labels.
 
 **Cost.** A weak teacher produces a small dataset rather than a wrong one. This is the
 single most important failure mode in the whole project: a quiet pipeline is safe, a
@@ -365,7 +367,7 @@ while remaining schema-valid. That was a real defect, caught in review.
 | `split` | `generated/` | `split/` (leakage blocks publication and every downstream consumer) | local |
 | `negatives` | `split/` + `chunks/` | `negatives/` | ollama |
 | `label` | `negatives/` | `labels/`, `review/` | ollama |
-| `tasks` | `split/` + `chunks/` | `tasks/<task>/` | ollama |
+| `tasks` | `split/` + `chunks/` | `tasks/<task>/`, `labels/`, `review/` | ollama |
 | `build` | `labels/` + `tasks/` | `dataset/<task>/` | local |
 | `validate` | `dataset/` | `validation.json` | local / weights |
 | `stats` | `dataset/` | `stats.{json,md}` | local |

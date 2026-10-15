@@ -609,8 +609,8 @@ def validate_labeling(section: LabelingConfig) -> None:
     _require(
         section.uncertain_high <= section.review_threshold,
         f"labeling.uncertain_high ({section.uncertain_high}) must be <= "
-        f"review_threshold ({section.review_threshold}); otherwise the uncertain band "
-        "would be partly auto-accepted",
+        f"review_threshold ({section.review_threshold}) so confidence bands have "
+        "stable review categories",
     )
     _require(0.0 <= section.temperature <= 2.0, "labeling.temperature must be in [0, 2]")
 
@@ -823,6 +823,8 @@ def load_training_profile_overrides(
 
     if not isinstance(loaded, Mapping):
         raise ConfigError(f"{profile_path} must contain a YAML mapping at the top level")
+    if any(not isinstance(key, str) for key in loaded):
+        raise ConfigError(f"{profile_path} has a non-string top-level key")
     unknown_sections = sorted(set(loaded) - {"project", "training"})
     if unknown_sections:
         raise ConfigError(
@@ -832,6 +834,8 @@ def load_training_profile_overrides(
     project = loaded.get("project", {})
     if not isinstance(project, Mapping):
         raise ConfigError(f"{profile_path} project section must be a mapping")
+    if any(not isinstance(key, str) for key in project):
+        raise ConfigError(f"{profile_path} project section has a non-string key")
     unknown_project = sorted(set(project) - {"seed"})
     if unknown_project:
         raise ConfigError(
@@ -842,6 +846,8 @@ def load_training_profile_overrides(
     training = loaded.get("training")
     if not isinstance(training, Mapping) or not training:
         raise ConfigError(f"{profile_path} must contain a non-empty training mapping")
+    if any(not isinstance(key, str) for key in training):
+        raise ConfigError(f"{profile_path} training section has a non-string key")
 
     overrides = {f"training.{key}": value for key, value in training.items()}
     if "seed" in project:

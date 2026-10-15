@@ -47,7 +47,7 @@ text influenced a training row.
 | SFT, QLoRA, TRL, causal-LM next-token training | Laya is a decision model, not a generative LM (AGENTS 3.11) |
 | Serving, APIs, databases, dashboards | Batch pipeline over files (AGENTS 7.8) |
 | A Persian stemmer or morphological analyser | A wrong light stemmer costs more recall than it buys; lexical overlap is used as a conservative gate, never as the arbiter |
-| Automatic labelling without human review | Only *proposals* are automatic; review is offered, not assumed (AGENTS 6.10) |
+| Automatic labelling without human confirmation | Teacher outputs remain proposals until a human confirms them; confidence never determines validity (AGENTS 6.10–6.11) |
 
 ## 3. Users
 

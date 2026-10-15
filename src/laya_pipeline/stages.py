@@ -192,7 +192,7 @@ def chunks_by_id(chunks: Sequence[Chunk]) -> Dict[str, Chunk]:
 def _write_examples(
     config: Config, stage: str, filename: str, examples: Sequence[LabeledExample]
 ) -> Path:
-    directory = ensure_dir(config.stage_dir(stage))
+    directory = ensure_dir(config.stage_dir(stage), config.corpus_dir)
     path = directory / filename
     write_jsonl(path, (example.to_dict() for example in examples), config.corpus_dir)
     return path
@@ -201,7 +201,7 @@ def _write_examples(
 def _write_generated(
     config: Config, filename: str, examples: Sequence[GeneratedExample]
 ) -> Path:
-    directory = ensure_dir(config.stage_dir(GENERATE_DIR))
+    directory = ensure_dir(config.stage_dir(GENERATE_DIR), config.corpus_dir)
     path = directory / filename
     write_jsonl(path, (example.to_dict() for example in examples), config.corpus_dir)
     return path
@@ -254,7 +254,7 @@ def stage_scan(config: Config) -> Dict[str, Any]:
     documents = discover_documents(config.corpus_dir)
     duplicates = find_duplicates(documents)
 
-    directory = ensure_dir(config.stage_dir(SCAN_DIR))
+    directory = ensure_dir(config.stage_dir(SCAN_DIR), config.corpus_dir)
     rows = [document.to_dict() for document in documents]
     write_jsonl(directory / "documents.jsonl", rows, config.corpus_dir)
     payload = {
@@ -291,7 +291,7 @@ def stage_process(config: Config) -> Dict[str, Any]:
     parsed: List[ParsedDocument] = [parse_markdown(document) for document in documents]
     chunks: List[Chunk] = chunker.chunk_documents(parsed)
 
-    directory = ensure_dir(config.stage_dir(CHUNK_DIR))
+    directory = ensure_dir(config.stage_dir(CHUNK_DIR), config.corpus_dir)
     document_rows = []
     for document in parsed:
         document_rows.append(
@@ -421,7 +421,7 @@ def stage_split(config: Config) -> Dict[str, Any]:
         positives.append(_positive_from(example, chunk, positive_label))
 
     report = assign_splits(positives, config, _chunks_by_source(chunks), _rng(config, "split"))
-    directory = ensure_dir(config.stage_dir(SPLIT_DIR))
+    directory = ensure_dir(config.stage_dir(SPLIT_DIR), config.corpus_dir)
     write_json(directory / "split.json", report.to_dict(), config.corpus_dir)
     write_json(
         directory / "dropped.json",
@@ -531,7 +531,7 @@ def stage_negatives(config: Config) -> Dict[str, Any]:
             totals[key] = totals.get(key, 0) + value
         rejected.extend(outcome.rejected)
 
-    directory = ensure_dir(config.stage_dir(NEGATIVE_DIR))
+    directory = ensure_dir(config.stage_dir(NEGATIVE_DIR), config.corpus_dir)
     _write_examples(config, NEGATIVE_DIR, "negatives.jsonl", collected)
     write_json(
         directory / "negatives.report.json",
@@ -586,12 +586,12 @@ def stage_label(config: Config, *, review_dir: Optional[Path] = None) -> Dict[st
     report = propose_labels(everything, config, client, prompts)
 
     contradictions = detect_contradictions(report.examples)
-    queue = report.queue + build_review_queue(report.examples, config)
+    queue = build_review_queue(report.examples, config)
 
-    directory = ensure_dir(config.stage_dir(LABEL_DIR))
+    directory = ensure_dir(config.stage_dir(LABEL_DIR), config.corpus_dir)
     _write_examples(config, LABEL_DIR, "labeled.jsonl", report.examples)
     csv_path = Path(review_dir) if review_dir else config.stage_dir(REVIEW_DIR) / "review.csv"
-    ensure_dir(csv_path.parent)
+    ensure_dir(csv_path.parent, config.corpus_dir)
     export_review_csv(queue, csv_path, config.corpus_dir)
 
     options_by_task = {name: config.laya.options(name) for name in config.laya.question_ids()}
@@ -691,7 +691,7 @@ def stage_tasks(config: Config, task: str, *, top_k: int = 3) -> Dict[str, Any]:
 
     combined = existing + produced
     _write_examples(config, LABEL_DIR, "labeled.jsonl", combined)
-    task_dir = ensure_dir(config.stage_dir(task))
+    task_dir = ensure_dir(config.stage_dir(task), config.corpus_dir)
     task_report = {"task": task, "examples": len(produced), "total_labeled": len(combined)}
     write_json(
         task_dir / f"{task}.report.json",
@@ -721,6 +721,17 @@ def stage_tasks(config: Config, task: str, *, top_k: int = 3) -> Dict[str, Any]:
             "previous_labeled_sha256": previous_labels_sha256,
         },
     )
+    review_queue = build_review_queue(combined, config)
+    review_dir = ensure_dir(config.stage_dir(REVIEW_DIR), config.corpus_dir)
+    review_path = review_dir / "review.csv"
+    export_review_csv(review_queue, review_path, config.corpus_dir)
+    _manifest(
+        config,
+        "review",
+        review_dir,
+        {"review_queue": len(review_queue)},
+        {"labels_sha256": _file_hash(config.stage_dir(LABEL_DIR) / "labeled.jsonl")},
+    )
     return task_report
 
 
@@ -739,7 +750,19 @@ def stage_build(config: Config, tasks: Sequence[str], *, positive_control: bool 
     """
     _load_split_report_obj(config)
     examples = load_examples(config)
-    directory = ensure_dir(config.stage_dir(DATASET_DIR))
+    pending = [
+        example
+        for example in examples
+        if example.task in tasks
+        and example.label_source == "teacher"
+        and not example.metadata.get("reviewed")
+    ]
+    if pending:
+        raise PipelineError(
+            f"{len(pending)} teacher label proposal(s) for requested task(s) have not "
+            "been confirmed by a human; review and apply the generated CSV before building"
+        )
+    directory = ensure_dir(config.stage_dir(DATASET_DIR), config.corpus_dir)
     suffix = "-control" if positive_control else ""
     results: Dict[str, Any] = {}
 
@@ -751,7 +774,7 @@ def stage_build(config: Config, tasks: Sequence[str], *, positive_control: bool 
         artifact = build_rows(
             config, task_examples, task, positive_control=positive_control
         )
-        task_dir = ensure_dir(directory / f"{task}{suffix}")
+        task_dir = ensure_dir(directory / f"{task}{suffix}", config.corpus_dir)
         for split in ("train", "validation", "test"):
             subset = [row for row in artifact.rows if f"split:{split}" in row.get("tags", [])]
             write_jsonl(task_dir / f"{split}.jsonl", subset, config.corpus_dir)
@@ -778,7 +801,7 @@ def stage_validate(
     from .dataset import load_rows, validate_rows, validate_with_tokenizer
 
     _load_split_report_obj(config)
-    directory = ensure_dir(config.stage_dir(DATASET_DIR))
+    directory = ensure_dir(config.stage_dir(DATASET_DIR), config.corpus_dir)
     reports: Dict[str, Any] = {}
     problems: List[str] = []
 
@@ -851,7 +874,7 @@ def stage_stats(config: Config, tasks: Sequence[str]) -> Dict[str, Any]:
         "sufficiency": sufficiency_balance(examples),
         "split_coverage": split_coverage(examples),
     }
-    directory = ensure_dir(config.stage_dir(DATASET_DIR))
+    directory = ensure_dir(config.stage_dir(DATASET_DIR), config.corpus_dir)
     write_json(directory / "stats.json", payload, config.corpus_dir)
     write_text(
         directory / "stats.md",

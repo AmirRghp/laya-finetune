@@ -559,7 +559,7 @@ def _run_evaluate(args: argparse.Namespace) -> Any:
             directory = Path(args.out)
             from .io import ensure_dir, write_json
 
-            ensure_dir(directory)
+            ensure_dir(directory, config.corpus_dir)
             write_json(directory / "retrieval.json", report, config.corpus_dir)
             write_manifest(
                 directory,

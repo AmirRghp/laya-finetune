@@ -21,6 +21,8 @@ from typing import Any, Iterable, Iterator, Mapping, Sequence
 from . import __version__
 from .errors import ConfigError, PipelineError
 
+_DEFAULT_CORPUS_DIR: Path = Path(__file__).resolve().parents[2] / "corpus"
+
 __all__ = [
     "ensure_dir",
     "resolve_output_path",
@@ -39,10 +41,11 @@ __all__ = [
 ]
 
 
-def ensure_dir(path: Path) -> Path:
-    """Create ``path`` and its parents if missing, and return it."""
-    path.mkdir(parents=True, exist_ok=True)
-    return path
+def ensure_dir(path: Path, corpus_dir: Path | None = None) -> Path:
+    """Create a directory outside the configured corpus or repository default."""
+    target = resolve_output_path(path, corpus_dir or _DEFAULT_CORPUS_DIR)
+    target.mkdir(parents=True, exist_ok=True)
+    return target
 
 
 def relative_posix(path: Path, root: Path) -> str:
@@ -89,7 +92,7 @@ def assert_writable(path: Path, corpus_dir: Path) -> Path:
 
 
 def _atomic_write_bytes(path: Path, payload: bytes, corpus_dir: Path | None) -> Path:
-    resolved = resolve_output_path(path, corpus_dir) if corpus_dir else Path(path)
+    resolved = resolve_output_path(path, corpus_dir or _DEFAULT_CORPUS_DIR)
     ensure_dir(resolved.parent)
     handle, tmp_name = tempfile.mkstemp(
         dir=str(resolved.parent), prefix=f".{resolved.name}.", suffix=".tmp"
